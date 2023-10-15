@@ -5,16 +5,16 @@
 A little description
 
 ## Content
-1. **[Problem Explaination](#problem-e)**
-2. **[Problem Analysis](#problem-a)**
+1. **[Problem Explaination](#problem-explanation)**
+2. **[Problem Analysis](#problem-analysis)**
 3. **[Solution and ML Methods](#ml-methods)**
-4. **[Measures, Training Protocols and Results](#results)**
+4. **[Measures, Training Protocols and Results](#training-protocols-measures-and-results)**
 
-## Problem Explanation {#problem-e}
+## Problem Explanation
 
 A little explanation
 
-## Problem Analysis {#problem-a}
+## Problem Analysis
 
 - Problem type
 
@@ -22,11 +22,11 @@ A little explanation
 
 - Feature engineering
 
-## ML Methods {#ml-methods}
+## ML Methods
 
 - ML methods used, Tested models (smth new - describe)
 
-## Training Protocols, Measures and Results {#results}
+## Training Protocols, Measures and Results
 
 - Training protocols
 
