@@ -1,8 +1,6 @@
-> This is a template of report (switch the branch to see works)
+# Spine Segmentation
 
-# Name Of Project
-
-A little description
+All doctors around the World, while analysing rengen images, still use ruler and monitor. So, what if the programm would select spine out of other body bones and compute all differences and angles?
 
 ## Content
 1. **[Problem Explaination](#problem-explanation)**
@@ -12,28 +10,43 @@ A little description
 
 ## Problem Explanation
 
-A little explanation
+We need to select and separate every vertebra from other bones on grayscale image and draw some vertebras which can be hidden behind bones. Than find corners' coordinates of each vertebra.
 
 ## Problem Analysis
 
-- Problem type
+### Problem Type
 
-- Data analysis (Graphs, Features, Distributions, params)
+Segmentation
 
-- Feature engineering
+### Data Analysis
+
+1. 500 Dicom files as train data, each of them contains:
+    - pixel array (4608 x 1920) in grayscale format (each pixel value is in [0, 255]) - rengen.
+    - age (in [0, 120])
+    - gender (0 - male, 1 - female)
+2. 500 PNG images as test data - pixel array (4608 x 1920) in grayscale format (each pixel value is in [0, 255]) - mask of spine's vertabras.
+
+### Feature engineering
+
+- All vertebras are trapecioid shape.
+- Count of vertebras in human body is fixed in most cases.
+- Some vertebras are joined, need to separate them.
+- each vertebra position correlates with body type, pose, age and gender.
+- There also side and frontal views.
 
 ## ML Methods
 
-- ML methods used, Tested models (smth new - describe)
+- The first model I tryed is [Unet++](https://arxiv.org/abs/2004.08790). This model is widely used in medical image segmentation. Here I used only dicom pixel data as input.<br/>
+![unet++ architecture](./Results/unetpp.png)
 
 ## Training Protocols, Measures and Results
 
-- Training protocols
-
-> Best Results
+Training contained 20 epoches. Batch-Size is 16. Supervision learning was used (x<sup>1.1</sup>, x<sup>1.2</sup>, x<sup>1.3</sup>, x<sup>1.4</sup> losses are combined in one).
 
 | Model name | Train Loss | Train Metrics | Eval Loss | Eval Metrics |
 | ---------- | ---------- | ------------- | --------- | ------------ |
-| Some name | LossName value | MetricName1 value <br> MetricName2 value | LossName value | MetricName value |
+| Unet++ | DiceLoss 1.88 | DiceCoef 2.12 | DiceLoss 1.55 | DiceCoef 2.45 |
 
-- Results of best model (show some cases)
+### Results
+
+![Unet++ after 20 epochs](./Results/unet++_20epochs.jpg)
