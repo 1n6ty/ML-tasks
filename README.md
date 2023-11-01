@@ -1,6 +1,4 @@
-> This is a template of report (switch the branch to see works)
-
-# Name Of Project
+# Nowcasting
 
 A little description
 
