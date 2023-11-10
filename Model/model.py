@@ -65,21 +65,21 @@ def make_unet_conv_LSTM_v2(input_shape: tuple[int, int, int, int], n_filters: in
     down_conv_3 = Concatenate(axis=1)(down_conv_3)
 
     # Encoder
-    conv_lstm_1 = ConvLSTM2D(filters=n_filters, kernel_size=kernel_size, padding="same")(down_conv_1)
-    conv_lstm_2 = ConvLSTM2D(filters=n_filters * 2, kernel_size=kernel_size, padding="same")(down_conv_2)
-    conv_lstm_3 = ConvLSTM2D(filters=n_filters * 4, kernel_size=kernel_size, padding="same")(down_conv_3)
-    conv_lstm_4 = ConvLSTM2D(filters=n_filters * 8, kernel_size=kernel_size, padding="same")(down_conv_3)
+    conv_lstm_1 = [ConvLSTM2D(filters=n_filters, kernel_size=kernel_size, padding="same")(down_conv_1) for i in range(out_seq)]
+    conv_lstm_2 = [ConvLSTM2D(filters=n_filters * 2, kernel_size=kernel_size, padding="same")(down_conv_2) for i in range(out_seq)]
+    conv_lstm_3 = [ConvLSTM2D(filters=n_filters * 4, kernel_size=kernel_size, padding="same")(down_conv_3) for i in range(out_seq)]
+    conv_lstm_4 = [ConvLSTM2D(filters=n_filters * 8, kernel_size=kernel_size, padding="same")(down_conv_3) for i in range(out_seq)]
 
     # Decoder
     output = []
     for seq in range(out_seq):
-        up_1 = Conv2DTranspose(n_filters * 4, (3, 3), strides=(2, 2), padding="same")(Concatenate(axis=-1)([conv_lstm_3, conv_lstm_4]))
+        up_1 = Conv2DTranspose(n_filters * 4, (3, 3), strides=(2, 2), padding="same")(Concatenate(axis=-1)([conv_lstm_3[seq], conv_lstm_4[seq]]))
         up_1 = Dropout(dropout_rate)(up_1)
 
-        up_2 = Conv2DTranspose(n_filters * 2, (3, 3), strides=(2, 2), padding="same")(Concatenate(axis=-1)([conv_lstm_2, up_1]))
+        up_2 = Conv2DTranspose(n_filters * 2, (3, 3), strides=(2, 2), padding="same")(Concatenate(axis=-1)([conv_lstm_2[seq], up_1]))
         up_2 = Dropout(dropout_rate)(up_2)
 
-        up_3 = Conv2DTranspose(n_filters, (3, 3), strides=(2, 2), padding="same")(Concatenate(axis=-1)([conv_lstm_1, up_2]))
+        up_3 = Conv2DTranspose(n_filters, (3, 3), strides=(2, 2), padding="same")(Concatenate(axis=-1)([conv_lstm_1[seq], up_2]))
         up_3 = Dropout(dropout_rate)(up_3)
 
         out = Conv2D(1, (3, 3), padding="same", kernel_initializer="he_normal", activation="linear")(up_3)
