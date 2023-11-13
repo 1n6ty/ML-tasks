@@ -1,2 +1,3 @@
 Data/*
 !Data/data-stays-here
+Model/__pycache__

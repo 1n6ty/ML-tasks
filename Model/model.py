@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras.regularizers import l2
-from keras.layers import Conv2D, Conv2DTranspose, MaxPool2D, Input, Activation, BatchNormalization, Dropout, concatenate
+from keras.regularizers import l2
+from keras.layers import Conv2D, Conv2DTranspose, MaxPool2D, Input, Dropout, concatenate
 from keras.models import Model
 
 dropout_rate = 0.1
