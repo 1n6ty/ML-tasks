@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+from itertools import product
 
 get_ratio = lambda x, x_min, x_max: (x - x_min) / (x_max - x_min)
 
@@ -243,44 +244,39 @@ def adjast_vertebras(border_coords, vertebras_corners, y, y_l, y_r, gamma = 1e6)
             v_c += 1
         return vertebras_corners
     
-def MSE(vertebras_corners, vertebras_corners_true):
+def MSE(vertebras_corners, vertebras_corners_true, gamma = 1e6):
     len_vertebras_corners, len_vertebras_corners_true = len(vertebras_corners), len(vertebras_corners_true)
     min_len = min(len_vertebras_corners, len_vertebras_corners_true)
     return np.sum([
         np.sqrt((vertebras_corners[i][0] - vertebras_corners_true[i][0]) ** 2 + (vertebras_corners[i][1] - vertebras_corners_true[i][1]) ** 2) 
     for i in range(min_len)
     ]) + np.sum([
-        np.sqrt((vertebras_corners[i][0]) ** 2 + (vertebras_corners[i][1]) ** 2) 
+        gamma 
     for i in range(min_len, len_vertebras_corners)
     ]) + np.sum([
-        np.sqrt((vertebras_corners_true[i][0]) ** 2 + (vertebras_corners_true[i][1]) ** 2) 
+        gamma
     for i in range(min_len, len_vertebras_corners_true)
     ])
 
-def img2niito_side(vertebras_corners, pixel_spacing):
-    init_v = [vertebras_corners[-4][0] * -1, vertebras_corners[-4][1] * -1]
+def rotate(arr, angle_r):
+    new_img = np.zeros_like(arr)
 
-    for i in range(len(vertebras_corners)):
-        vertebras_corners[i] = [(vertebras_corners[-4][1] + init_v[1]) * pixel_spacing, (vertebras_corners[-4][0] + init_v[0]) * -pixel_spacing]
+    origin_c = list(map(int, np.floor(np.array([arr.shape[1], arr.shape[0]]) / 2)))
+    init_coords = list(product([c for c in range(arr.shape[1])], [r for r in range(arr.shape[0])]))
     
-    vertebras_corners = vertebras_corners[-96:] # for case where only 24 vertebras are seen
+    origin = np.array([origin_c for c in init_coords])
 
-    obj = {}
-
-    i = 95
-    for name in ["S1", "L5", "L4", "L3", "L2", "L1",
-                 "Th12", "Th11", "Th10", "Th9", "Th8", "Th7", "Th6", "Th5", "Th4", "Th3", "Th2", "Th1",
-                 "C7", "C6", "C5", "C4", "C3", "C2"]:
-        obj[name] = [
-            [*(vertebras_corners[i - 1]), 0.1],
-            [*(vertebras_corners[i - 3]), 0.1],
-            [*(vertebras_corners[i - 2]), 0.1],
-            [*(vertebras_corners[i]), 0.1]
-        ]
-
-        i -= 4
+    new_coords = (np.array([
+                    [np.cos(angle_r), -np.sin(angle_r)], 
+                    [np.sin(angle_r), np.cos(angle_r)]]) @ ((np.array(init_coords) - origin).T)) + (origin.T)
+    new_coords = new_coords.astype(dtype=np.int32)
     
-    return obj
+    for i in range(len(init_coords)):
+        c, r = init_coords[i]
+        if 0 <= new_coords[1][i] < arr.shape[0] and 0 <= new_coords[0][i] < arr.shape[1]:
+            new_img[new_coords[1][i], new_coords[0][i]] = arr[r, c]
+    
+    return new_img
 
 def img2niito_front(vertebras_corners, pixel_spacing):
     init_v = [vertebras_corners[-4][0] * -1, vertebras_corners[-4][1] * -1]
@@ -301,6 +297,31 @@ def img2niito_front(vertebras_corners, pixel_spacing):
             [0.1, *(vertebras_corners[i - 3][::-1])],
             [0.1, *(vertebras_corners[i - 2][::-1])],
             [0.1, *(vertebras_corners[i][::-1])]
+        ]
+
+        i -= 4
+    
+    return obj
+
+def img2niito_side(vertebras_corners, pixel_spacing):
+    init_v = [vertebras_corners[-4][0] * -1, vertebras_corners[-4][1] * -1]
+
+    for i in range(len(vertebras_corners)):
+        vertebras_corners[i] = [(vertebras_corners[-4][1] + init_v[1]) * pixel_spacing, (vertebras_corners[-4][0] + init_v[0]) * -pixel_spacing]
+    
+    vertebras_corners = vertebras_corners[-96:] # for case where only 24 vertebras are seen
+
+    obj = {}
+
+    i = 95
+    for name in ["S1", "L5", "L4", "L3", "L2", "L1",
+                 "Th12", "Th11", "Th10", "Th9", "Th8", "Th7", "Th6", "Th5", "Th4", "Th3", "Th2", "Th1",
+                 "C7", "C6", "C5", "C4", "C3", "C2"]:
+        obj[name] = [
+            [*(vertebras_corners[i - 1]), 0.1],
+            [*(vertebras_corners[i - 3]), 0.1],
+            [*(vertebras_corners[i - 2]), 0.1],
+            [*(vertebras_corners[i]), 0.1]
         ]
 
         i -= 4
