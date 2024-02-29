@@ -95,13 +95,19 @@ def make_unet_conv_LSTM(input_shape: tuple[int, int, int, int], n_filters: list,
     unet_output = concatenate(unet_output, axis=1)
 
     # LSTM
-    LSTM_output = tf.transpose(
-        ConvLSTM2D(out_seq, kernel_size, padding="same", kernel_initializer="he_normal")(unet_output), perm=[0, 3, 1, 2]
-    )
-
+    LSTM_output = []
+    for i in range(out_seq):
+        LSTM_output.append(
+            tf.squeeze(tf.expand_dims(ConvLSTM2D(1, kernel_size, padding="same", kernel_initializer="he_normal")(unet_output), axis=1), axis=[4])
+        )
+    LSTM_output = concatenate(LSTM_output, axis=1)
+    
     # Axile Attention
     for i in range(n_attention):
         LSTM_output = AxileAttention((out_seq, input_shape[1], input_shape[2]), "horizontal")(LSTM_output)
         LSTM_output = AxileAttention((out_seq, input_shape[1], input_shape[2]), "vertical")(LSTM_output)
 
     return Model(inputs = [inp], outputs = [LSTM_output])
+
+conv_LSTM = make_unet_conv_LSTM((4, 256, 256, 11), [64, 128, 256], (3, 3), 12, 4)
+print(conv_LSTM.summary())
