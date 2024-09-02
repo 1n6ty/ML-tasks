@@ -19,53 +19,6 @@ def standard_unit(input_tensor, filters, kernel_size=3, name=None):
 
     return x
 
-class Attention(Layer):
-    def __init__(self, kernel_size = 1):
-        super().__init__()
-
-        self.kernel_size = kernel_size
-
-        self.softmax_layer = Softmax(axis = [1, 2])
-    
-    def build(self, input_shape):
-        self.conv_query = Conv2D(
-            input_shape = input_shape[-1:],
-            filters = input_shape[-1],
-            kernel_size = self.kernel_size,
-            padding = "same",
-            kernel_initializer = "he_normal",
-            activation = "linear"
-        )
-        self.conv_key = Conv2D(
-            input_shape = input_shape[-1:],
-            filters = input_shape[-1],
-            kernel_size = self.kernel_size,
-            padding = "same",
-            kernel_initializer = "he_normal",
-            activation = "linear"
-        )
-        self.conv_value = Conv2D(
-            input_shape = input_shape[-1:],
-            filters = input_shape[-1],
-            kernel_size = self.kernel_size,
-            padding = "same",
-            kernel_initializer = "he_normal",
-            activation = "linear"
-        )
-
-    def call(self, inputs):
-        query_layer = self.conv_query(inputs)
-        key_layer = self.conv_key(inputs)
-        value_layer = self.conv_value(inputs)
-
-        kv_layer = tf.multiply(query_layer, key_layer)
-
-        sm_layer = self.softmax_layer(kv_layer)
-        
-        weighted_layer = tf.multiply(sm_layer, value_layer)
-        
-        return tf.add(weighted_layer, inputs)
-
 def make_unet2p(input_shape, filters, deep_supervision):
     img_input = Input(input_shape)
 

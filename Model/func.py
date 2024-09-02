@@ -2,261 +2,208 @@ import numpy as np
 import cv2
 from itertools import product
 
-get_ratio = lambda x, x_min, x_max: (x - x_min) / (x_max - x_min)
-
-def get_edgefunc_coef(data, border_coords, n = 10):
-    y_l, y_r = [], []
-    x_l, x_r = [], []
-    A_l, A_r = [], []
-    for i in range(border_coords[0][1], border_coords[1][1] + 1):
-        # left hand
-        for j in range(border_coords[0][0], border_coords[1][0]):
-            if data[i, j]: 
-                y_l.append(j)
-                x_l.append(i)
-
-                x = get_ratio(i, border_coords[0][1], border_coords[1][1])
-                A_l.append([(x ** t) * ((1 - x) ** (n - t)) for t in range(0, n + 1)])
-                break
-        
-        # right hand
-        for j in range(border_coords[1][0], border_coords[0][0] - 1, -1):
-            if data[i, j]: 
-                y_r.append(j)
-                x_r.append(i)
-
-                x = get_ratio(i, border_coords[0][1], border_coords[1][1])
-                A_r.append([(x ** t) * ((1 - x) ** (n - t)) for t in range(0, n + 1)])
-                break
-
-    y_l, y_r = np.array(y_l, dtype=np.float32), np.array(y_r, dtype=np.float32)
-    A_l, A_r = np.array(A_l, dtype=np.float32), np.array(A_r, dtype=np.float32)
-
-    c_l, c_r = np.dot(np.linalg.inv(np.dot(A_l.T, A_l)), np.dot(A_l.T, y_l.T)), np.dot(np.linalg.inv(np.dot(A_r.T, A_r)), np.dot(A_r.T, y_r.T))
-    return c_l, c_r
-
-def search_for_borders(data):
+def get_borders(data: np.ndarray) -> np.ndarray: 
+    """
+    Searching for borders of spine
+    """
     IMG_SHAPE = data.shape
-    x1, y1, x2, y2 = 0, 0, 0, 0
+    borders = np.zeros((2, 2), dtype=np.int32) # [[up-left] and [down-right] coords]
 
-    # search for y1
+    # search for row1
     break_flag = False
     for i in range(IMG_SHAPE[0]):
         for j in range(IMG_SHAPE[1]):
             if data[i, j]:
-                y1 = i
+                borders[0, 0] = i
                 break_flag = True
                 break
         if break_flag: break
 
-    # search for y2
+    # search for row2
     break_flag = False
-    for i in range(IMG_SHAPE[0] - 1, 0, -1):
+    for i in range(IMG_SHAPE[0] - 1, -1, -1):
         for j in range(IMG_SHAPE[1]):
             if data[i, j]:
-                y2 = i
+                borders[1, 0] = i
                 break_flag = True
                 break
         if break_flag: break
 
-    # search for x1
+    # search for col1
     break_flag = False
     for i in range(IMG_SHAPE[1]):
         for j in range(IMG_SHAPE[0]):
             if data[j, i]:
-                x1 = i
+                borders[0, 1] = i
                 break_flag = True
                 break
         if break_flag: break
 
-    # search for x2
+    # search for col2
     break_flag = False
     for i in range(IMG_SHAPE[1] - 1, 0, -1):
         for j in range(IMG_SHAPE[0]):
             if data[j, i]:
-                x2 = i
+                borders[1, 1] = i
                 break_flag = True
                 break
         if break_flag: break
     
-    return ((x1, y1), (x2, y2))
+    return borders
 
-def normalOverEdge(border_coords, x, y, y_l, y_r, gamma = 1e6):
-    delta = y[x - border_coords[0][1] + 1] - y[x - border_coords[0][1] - 1]
-    f_normal = -2 / delta if delta != 0 else gamma
+def get_lr_matrixes(data: np.ndarray, borders: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]: 
+    """
+    Get left-edge and right-edge projections on col's axis
+    """
+    y_len = borders[1, 0] + 1 - borders[0, 0] # height of the spine in pixels
 
-    denominator = max([1, abs(f_normal)])
-    x_c, y_c = 1, f_normal
-    x_c, y_c = x_c / denominator, y_c / denominator
+    y_l, y_r = np.zeros(shape=y_len, dtype=np.float32), np.zeros(shape=y_len, dtype=np.float32) # left projection and right projection on col's axis
+    exc_l, exc_r = np.zeros(shape=y_len, dtype=np.float32), np.zeros(shape=y_len, dtype=np.float32) # indicator whether gap (0) or vertebra (1)
+
+    for i in range(borders[0, 0], borders[1, 0] + 1):
+        ind = i - borders[0, 0]
+        # left hand
+        for j in range(borders[0, 1], borders[1, 1] + 1):
+            if data[i, j]: 
+                y_l[ind] = j
+                exc_l[ind] = 1
+                break
+        # right hand
+        for j in range(borders[1, 1], borders[0, 1] - 1, -1):
+            if data[i, j]: 
+                y_r[ind] = j
+                exc_r[ind] = 1
+                break
+
+    W_l, W_r = np.diag(exc_l), np.diag(exc_r) # making weight-matrix from indicator
     
-    reach_right_edge, reach_left_edge = False, False
+    return (y_l, W_l, y_r, W_r)
 
-    cur_pos, cur_neg = [x, int(y[x - border_coords[0][1]])], [x, int(y[x - border_coords[0][1]])]
-    while (not (reach_right_edge and reach_left_edge)):
-        if not reach_left_edge:
-            cur_pos = [cur_pos[0] + x_c, cur_pos[1] + y_c]
-            reach_left_edge = not ((border_coords[0][1] <= int(cur_pos[0]) <= border_coords[1][1]) and y_l[int(cur_pos[0]) - border_coords[0][1]] <= int(cur_pos[1]) and y_r[int(cur_pos[0]) - border_coords[0][1]] >= int(cur_pos[1]))
-        
-        if not reach_right_edge:
-            cur_neg = [cur_neg[0] - x_c, cur_neg[1] - y_c]
-            reach_right_edge = not ((border_coords[0][1] <= int(cur_neg[0]) <= border_coords[1][1]) and y_r[int(cur_neg[0]) - border_coords[0][1]] >= int(cur_neg[1]) and y_l[int(cur_neg[0]) - border_coords[0][1]] <= int(cur_neg[1]))
+def get_Vandermond_matrix(start: int, stop: int, num: int, n: int) -> np.ndarray:
+    """
+    Computes Vandermont's matrix of n cols and num rows (start <= x <= stop).
+    f(x) = (x^t) * ((1 - x)^(n - t))
+    """
+    A = np.linspace(start, stop, num, dtype=np.float32)
+    return np.array([[(x ** t) * ((1 - x) ** (n - t)) for t in range(n + 1)] for x in A], dtype=np.float32)
+
+def get_lr_quantilepart(lr_matrixes: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray], iter: int, q_part: float, A: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Computes quantile regression through iter iterations over q_part SquareError.
+    Where f(x, n) is used to compute Vandermont's matrix (n - last power in series)
+    """
+    y_l, W_l, y_r, W_r = lr_matrixes
+
+    coef_l, coef_r = np.dot(np.linalg.inv(np.dot(np.dot(A.T, W_l), A)), np.dot(np.dot(A.T, W_l), y_l.T)), np.dot(np.linalg.inv(np.dot(np.dot(A.T, W_r), A)), np.dot(np.dot(A.T, W_r), y_r.T))
+    y_l_q, y_r_q = np.dot(A, coef_l.T), np.dot(A, coef_r.T)
+
+    for _ in range(iter):
+        se_l, se_r = (y_l_q - y_l) ** 2, (y_r_q - y_r) ** 2
+        part_l, part_r = (-np.sort(-se_l))[int(se_l.shape[0] * q_part)], (-np.sort(-se_r))[int(se_r.shape[0] * q_part)]
+
+        W_l, W_r = np.diag(np.asarray(se_l < part_l, dtype=np.float32)), np.diag(np.asarray(se_r < part_r, dtype=np.float32))
+
+        coef_l, coef_r = np.dot(np.linalg.inv(np.dot(np.dot(A.T, W_l), A)), np.dot(np.dot(A.T, W_l), y_l.T)), np.dot(np.linalg.inv(np.dot(np.dot(A.T, W_r), A)), np.dot(np.dot(A.T, W_r), y_r.T))
+        y_l_q, y_r_q = np.dot(A, coef_l.T), np.dot(A, coef_r.T)
     
-    return sorted([cur_pos, cur_neg], key=lambda x: x[1])
+    return (y_l_q, W_l, y_r_q, W_r)
 
-def get_vertebras_corners(data, border_coords, y, y_l, y_r, threshold, gamma = 1e6):
-    vertebras_corners = []
-    prev_edge = True
-    prev_coords = []
-    for i in range(border_coords[0][1] + 1, border_coords[1][1]):
-        delta = y[i - border_coords[0][1] + 1] - y[i - border_coords[0][1] - 1]
-        f_normal = -2 / delta if delta != 0 else gamma
+def get_lr_kernelpart(lr_matrixes: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray], quantile_matrixes: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray], K, h: float) -> tuple[np.ndarray, np.ndarray]:
+    """
+        Computes kernel regression with kernel K and step h
+    """
+    y_l, W_l, y_r, W_r = lr_matrixes
+    y_l_q, W_l, y_r_q, W_r = quantile_matrixes
 
-        denominator = max([1, abs(f_normal)])
-        x_c, y_c = 1, f_normal
-        x_c, y_c = x_c / denominator, y_c / denominator
-        
-        reach_right_edge, reach_left_edge = False, False
+    y_l_k, y_r_k = np.dot(y_l, W_l), np.dot(y_r, W_r)
+    y_l_k, y_r_k = np.where(y_l_k > 1e-6, y_l_k, y_l_q), np.where(y_r_k > 1e-6, y_r_k, y_r_q)
 
-        s, it = data[i, int(y[i - border_coords[0][1]])], 1
-        cur_pos, cur_neg = [i, int(y[i - border_coords[0][1]])], [i, int(y[i - border_coords[0][1]])]
-        while (not (reach_right_edge and reach_left_edge)):
-            if not reach_left_edge:
-                cur_pos = [cur_pos[0] + x_c, cur_pos[1] + y_c]
-                if (border_coords[0][1] <= int(cur_pos[0]) <= border_coords[1][1]) and y_l[int(cur_pos[0]) - border_coords[0][1]] <= int(cur_pos[1]) and y_r[int(cur_pos[0]) - border_coords[0][1]] >= int(cur_pos[1]):
-                    s += data[int(cur_pos[0]), int(cur_pos[1])]
-                    it += 1
+    A = np.linspace(0, 1, y_l.shape[0], dtype=np.float32); A = np.array([-A + A[i] for i in range(A.shape[0])]); A = np.array([[K(j) / h for j in i] for i in A], dtype=np.float32)
+    A_l_w, A_r_w = np.dot(A, np.diag(y_l_k)), np.dot(A, np.diag(y_r_k))
+
+    A = np.sum(A, axis=0)
+    return (np.divide(np.sum(A_l_w, axis=0), A).T, np.divide(np.sum(A_r_w, axis=0), A).T)
+
+def get_lr_approximation(data: np.ndarray, borders: np.ndarray, A: np.ndarray, K, n: int, iter: int, q_part: float, n_part: float, h: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Computes aproximation for left-edge and right-edge projections using quantile + kernel regression algorithm.
+    n_part regulates amount of kernel regression part
+    """
+    matrixes = get_lr_matrixes(data, borders)
+    
+    quantile_matrixes = get_lr_quantilepart(matrixes, iter, q_part, A)
+    kernel_matrixes = get_lr_kernelpart(matrixes, quantile_matrixes, K, h)
+
+    y_l, W_l, y_r, W_r = matrixes
+    y_l_q, W_l, y_r_q, W_r = quantile_matrixes
+    y_l_k, y_r_k = kernel_matrixes
+
+    y_l_r, y_r_r = (y_l_q * (1 - n_part) + n_part * y_l_k).astype(dtype=np.int32), (y_r_q * (1 - n_part) + n_part * y_r_k).astype(dtype=np.int32)
+
+    return ((y_l_r + y_r_r) / 2, y_l_r, y_r_r)
+
+def get_vertebras_corners(data: np.ndarray, borders: np.ndarray, y: tuple[np.ndarray, np.ndarray, np.ndarray], threshold: float) -> np.ndarray:
+    """
+    Based on data image (0 <= pixel <= 1) and (middle regression, right-edge, left-edge) computes corners coords [row, col] of each vertebra.
+    if line_mean >= threshold then it is vertebra, else - gap. 
+    """
+    vertebras = [] # to store final result
+
+    gamma = 1e-6 # used as gradient of a straight horizontal line
+    y_m, y_l, y_r = [i.astype(dtype=np.float32) for i in y]
+    
+    dy_m = np.concatenate([y_m[1:], y_m[-1:]]) - y_m; dy_m = np.where(dy_m != 0, dy_m, np.full_like(dy_m, gamma))
+    grad = np.divide(-np.ones_like(y_m, dtype=np.float32), dy_m) # tan of normal
+
+    prev_state = False # True - previous state was VERTEBRA, False - GAP
+    for x in range(grad.shape[0]):
+        delta = np.array([1.0, grad[x]], dtype=np.float32); delta = delta / np.max(np.abs(delta))
+        left_coords, right_coords = np.array([x, y_m[x]], dtype=np.float32), np.array([x, y_m[x]], dtype=np.float32)
+
+        reach_edge = [False, False] # indicator of reaching the edge [left, right] by line
+        summary = np.zeros(shape=2, dtype=np.float32) # saving [sum, steps]
+        while not all(reach_edge):
+            if not reach_edge[0]:
+                if (0 <= left_coords[0] < y_m.shape[0]) and (borders[0, 1] <= left_coords[1]) and (y_l[int(left_coords[0])] < left_coords[1]):
+                    summary += np.array([data[borders[0, 0] + int(left_coords[0]), int(left_coords[1])], 1], dtype=np.float32)
+                    left_coords += (-1 if delta[1] > 0 else 1) * delta
                 else:
-                    reach_left_edge = True
-            
-            if not reach_right_edge:
-                cur_neg = [cur_neg[0] - x_c, cur_neg[1] - y_c]
-                if (border_coords[0][1] <= int(cur_neg[0]) <= border_coords[1][1]) and y_r[int(cur_neg[0]) - border_coords[0][1]] >= int(cur_neg[1]) and y_l[int(cur_neg[0]) - border_coords[0][1]] <= int(cur_neg[1]):
-                    s += data[int(cur_neg[0]), int(cur_neg[1])]
-                    it += 1
-                else:
-                    reach_right_edge = True
-        s /= it
-        cur_coords = sorted([cur_pos, cur_neg], key=lambda x: x[1])
+                    reach_edge[0] = True
 
-        if ((i == border_coords[0][1] + 1) or (i == border_coords[1][1] - 1) or (not prev_edge)) and s >= threshold:
-            vertebras_corners = [*vertebras_corners, *cur_coords]
-        elif prev_edge and s < threshold:
-            vertebras_corners = [*vertebras_corners, *prev_coords]
+            if not reach_edge[1]:
+                if (0 <= left_coords[0] < y_m.shape[0]) and (right_coords[1] <= borders[1, 1]) and (right_coords[1] < y_r[int(right_coords[0])]):
+                    summary += np.array([data[borders[0, 0] + int(right_coords[0]), int(right_coords[1])], 1], dtype=np.float32)
+                    right_coords += (1 if delta[1] > 0 else -1) * delta
+                else:
+                    reach_edge[1] = True
         
-        prev_coords = cur_coords
-        if s >= threshold:
-            prev_edge = True
+        left_coords[0] += borders[0, 0]; right_coords[0] += borders[0, 0] # attaching to a pivot of a data
+        left_coords, right_coords = left_coords.astype(dtype=np.int32), right_coords.astype(dtype=np.int32)
+        
+        if summary[1] > 0:
+            if summary[0] / summary[1] >= threshold:
+                if not prev_state:
+                    vertebras += [left_coords, right_coords]
+                    prev_state = True
+            else:
+                if prev_state:
+                    vertebras += [left_coords, right_coords]
+                    prev_state = False
         else:
-            prev_edge = False
-    
-    return vertebras_corners
+            if prev_state:
+                vertebras += [left_coords, right_coords]
+                prev_state = False
 
-def approximateYbezie_lcr(border_coords, edge_coef, n):
-    avg_c = np.float32((edge_coef[0] + edge_coef[1]) / 2)
-    A = [
-        [
-            (get_ratio(i, border_coords[0][1], border_coords[1][1]) ** t) * ((1 - get_ratio(i, border_coords[0][1], border_coords[1][1])) ** (n - t)) 
-            for t in range(0, n + 1)
-        ]
-        for i in range(border_coords[0][1], border_coords[1][1] + 1)
-    ]
-    return [np.dot(A, avg_c.T), np.dot(A, edge_coef[0]), np.dot(A, edge_coef[1])]
+    return np.array(vertebras)
 
-def adjast_vertebras(border_coords, vertebras_corners, y, y_l, y_r, gamma = 1e6):
-    corners_l = len(vertebras_corners)
-
-    if (corners_l % 4) == 0:
-        vertebra_gap_lengths = [
-            np.sqrt((vertebras_corners[i][0] - vertebras_corners[i + 2][0]) ** 2 + (vertebras_corners[i][1] - vertebras_corners[i + 2][1]) ** 2)
-        for i in range(corners_l - 2)
-        ]
-        
-        vertebra_lengths, gap_lengths = [], []
-        for i in range(0, len(vertebra_gap_lengths), 4):
-            vertebra_lengths = [*vertebra_lengths, sum(vertebra_gap_lengths[i: i + 2]) / 2]
-            gap_lengths = [*gap_lengths, sum(vertebra_gap_lengths[i + 2: i + 4]) / 2]
-
-        gap_lengths = sorted(gap_lengths)
-        length_vertebra_l, length_gap_l = len(vertebra_lengths), len(gap_lengths)
-
-        avg_vertebra_length = vertebra_lengths[length_vertebra_l // 2] if (length_vertebra_l % 2) else (vertebra_lengths[length_vertebra_l // 2] + vertebra_lengths[length_vertebra_l // 2 - 1]) / 2
-        avg_gap_length = gap_lengths[length_gap_l // 2] if (length_gap_l % 2) else (gap_lengths[length_gap_l // 2] + gap_lengths[length_gap_l // 2 - 1]) / 2
-
-        i = 0
-        v_c = 0
-        while i < corners_l:
-            d_vertebra_x = (vertebras_corners[i + 2][0] - vertebras_corners[i][0] + vertebras_corners[i + 3][0] - vertebras_corners[i + 1][0]) / 2
-            d_vertebra_y = (vertebras_corners[i + 2][1] - vertebras_corners[i][1] + vertebras_corners[i + 3][1] - vertebras_corners[i + 1][1]) / 2
-
-            l_vertebra = np.sqrt(d_vertebra_x ** 2 + d_vertebra_y ** 2)
-
-            ratio = avg_vertebra_length / l_vertebra
-
-            if 0.5 >= ratio:
-                x = int(vertebras_corners[i][0] + avg_vertebra_length)
-                vertebras_corners = [
-                    *(vertebras_corners[: i + 2]),
-                    *normalOverEdge(border_coords, x, y, y_l, y_r, gamma),
-                    *(vertebras_corners[i + 2: ])
-                ]
-
-                x = int(vertebras_corners[i][0] + avg_vertebra_length + avg_gap_length)
-                vertebras_corners = [
-                    *(vertebras_corners[: i + 4]),
-                    *normalOverEdge(border_coords, x, y, y_l, y_r, gamma),
-                    *(vertebras_corners[i + 4: ])
-                ]
-
-                vertebra_lengths = [
-                    *(vertebra_lengths[: v_c]),
-                    avg_vertebra_length,
-                    vertebra_lengths[v_c] - avg_gap_length - avg_vertebra_length,
-                    *(vertebra_lengths[v_c + 1:])
-                ]
-
-                corners_l += 4
-            elif 2 <= ratio:
-                if i == len(vertebras_corners) - 4:
-                    i -= 4
-
-                    vertebra_lengths = [
-                        *(vertebra_lengths[: v_c - 1]),
-                        vertebra_lengths[v_c - 1] + vertebra_lengths[v_c]
-                    ]
-                    v_c -= 1
-                else:
-                    vertebra_lengths = [
-                        *(vertebra_lengths[: v_c]),
-                        vertebra_lengths[v_c + 1] + vertebra_lengths[v_c]
-                    ]
-                
-                vertebras_corners = [
-                    *(vertebras_corners[0: i + 2]),
-                    *(vertebras_corners[i + 6: ])
-                ]
-
-                corners_l -= 4
-                i -= 4
-            
-            i += 4
-
-            avg_vertebra_length = vertebra_lengths[v_c]
-            v_c += 1
-        return vertebras_corners
-    
-def MSE(vertebras_corners, vertebras_corners_true, gamma = 1e6):
-    len_vertebras_corners, len_vertebras_corners_true = len(vertebras_corners), len(vertebras_corners_true)
-    min_len = min(len_vertebras_corners, len_vertebras_corners_true)
-    return np.sum([
-        np.sqrt((vertebras_corners[i][0] - vertebras_corners_true[i][0]) ** 2 + (vertebras_corners[i][1] - vertebras_corners_true[i][1]) ** 2) 
-    for i in range(min_len)
-    ]) + np.sum([
-        gamma 
-    for i in range(min_len, len_vertebras_corners)
-    ]) + np.sum([
-        gamma
-    for i in range(min_len, len_vertebras_corners_true)
-    ])
+def euclidian_mean_niito(data, data_true, gamma = 1e6):
+    obj = {}
+    for name in data_true:
+        if name in data:
+            obj[name] = np.sum([np.sqrt(np.sum([(data[name][i][j] - data_true[name][i][j])**2 for j in range(2)])) for i in range(4)]) / 4
+        else:
+            obj[name] = gamma
+    return obj
 
 def rotate(arr, angle_r):
     new_img = np.zeros_like(arr)
@@ -278,52 +225,50 @@ def rotate(arr, angle_r):
     
     return new_img
 
-def img2niito_front(vertebras_corners, pixel_spacing):
-    init_v = [vertebras_corners[-4][0] * -1, vertebras_corners[-4][1] * -1]
+def img2niito(vertebras_corners, pixel_spacing, mode): # mode: ["side", "frontal"]
+    if mode == 'side':
+        init_v = [vertebras_corners[-4][0] * -1, vertebras_corners[-4][1] * -1]
+    else:
+        init_v = [(vertebras_corners[-4][0] + vertebras_corners[-3][0]) * -0.5, (vertebras_corners[-4][1] + vertebras_corners[-3][1]) * -0.5]
 
+    ver = []
     for i in range(len(vertebras_corners)):
-        vertebras_corners[i] = [(vertebras_corners[-4][1] + init_v[1]) * pixel_spacing, (vertebras_corners[-4][0] + init_v[0]) * -pixel_spacing]
-    
-    vertebras_corners = vertebras_corners[-96:] # for case where only 24 vertebras are seen
+        ver.append([(vertebras_corners[i][1] + init_v[1]) * pixel_spacing[0], (vertebras_corners[i][0] + init_v[0]) * -pixel_spacing[1]])
 
     obj = {}
 
-    i = 95
+    i = 4
     for name in ["S1", "L5", "L4", "L3", "L2", "L1",
-                 "Th12", "Th11", "Th10", "Th9", "Th8", "Th7", "Th6", "Th5", "Th4", "Th3", "Th2", "Th1",
-                 "C7", "C6", "C5", "C4", "C3", "C2"]:
-        obj[name] = [
-            [0.1, *(vertebras_corners[i - 1][::-1])],
-            [0.1, *(vertebras_corners[i - 3][::-1])],
-            [0.1, *(vertebras_corners[i - 2][::-1])],
-            [0.1, *(vertebras_corners[i][::-1])]
-        ]
+                    "Th12", "Th11", "Th10", "Th9", "Th8", "Th7", "Th6", "Th5", "Th4", "Th3", "Th2", "Th1",
+                    "C7", "C6", "C5", "C4", "C3", "C2"]:
+        if mode == "side":
+            obj[name] = [
+                [*(ver[-i + 2]), 0.1],
+                [*(ver[-i]), 0.1],
+                [*(ver[-i + 1]), 0.1],
+                [*(ver[-i + 3]), 0.1]
+            ]
+        elif mode == "frontal":
+            obj[name] = [
+                [0.1, *(ver[-i + 2][::-1])],
+                [0.1, *(ver[-i][::-1])],
+                [0.1, *(ver[-i + 1][::-1])],
+                [0.1, *(ver[-i + 3][::-1])]
+            ]
 
-        i -= 4
+        i += 4
+        if i > len(ver):
+            break
     
     return obj
 
-def img2niito_side(vertebras_corners, pixel_spacing):
-    init_v = [vertebras_corners[-4][0] * -1, vertebras_corners[-4][1] * -1]
+def point_difference(vertebras, vertebras_true, pixelspacing):
+    v_length, v_t_length = len(vertebras), len(vertebras_true)
+    v, v_t = np.array(vertebras), np.array(vertebras_true)
+    v, v_t = np.expand_dims(v, axis=1), np.expand_dims(v_t, axis=0)
+    v, v_t = np.concatenate([v for i in range(v_t_length)], axis=1), np.concatenate([v_t for i in range(v_length)], axis=0)
 
-    for i in range(len(vertebras_corners)):
-        vertebras_corners[i] = [(vertebras_corners[-4][1] + init_v[1]) * pixel_spacing, (vertebras_corners[-4][0] + init_v[0]) * -pixel_spacing]
+    pix = np.array([[pixelspacing] * v_t_length] * v_length)
     
-    vertebras_corners = vertebras_corners[-96:] # for case where only 24 vertebras are seen
-
-    obj = {}
-
-    i = 95
-    for name in ["S1", "L5", "L4", "L3", "L2", "L1",
-                 "Th12", "Th11", "Th10", "Th9", "Th8", "Th7", "Th6", "Th5", "Th4", "Th3", "Th2", "Th1",
-                 "C7", "C6", "C5", "C4", "C3", "C2"]:
-        obj[name] = [
-            [*(vertebras_corners[i - 1]), 0.1],
-            [*(vertebras_corners[i - 3]), 0.1],
-            [*(vertebras_corners[i - 2]), 0.1],
-            [*(vertebras_corners[i]), 0.1]
-        ]
-
-        i -= 4
-    
-    return obj
+    diff = ((v - v_t) * pix) ** 2
+    return np.min(np.sqrt(np.sum(diff, axis=-1)), axis=-1)
