@@ -17,13 +17,15 @@ from tensorflow.python.keras.callbacks import ModelCheckpoint
 DATA_DIR = os.path.abspath('../DataSet')
 RESULTS = os.path.abspath('../Results')
 
-with open(os.path.join(DATA_DIR, 'routes.json'), 'r') as f:
+MODE = "side"
+
+with open(os.path.join(DATA_DIR, f'routes_{MODE}.json'), 'r') as f:
     FILE_DIRS = json.loads(f.read())
 
 IMG_SHAPE = (3408, 1552)
-VALIDATION_NUM = 400
-BATCH_SIZE = 2
-EPOCHS = 40
+VALIDATION_NUM = 
+BATCH_SIZE = 1
+EPOCHS = 200
 
 WEIGHTS2LOAD = None #os.path.join(RESULTS, 'saved_weights/0-weights_unetpp.hdf5')
 
@@ -40,7 +42,7 @@ class Data_train_generator(Sequence):
         self.update_func = update_func
 
     def __len__(self):
-        return int(np.ceil((self.l_d - self.val_size) / float(self.batch_size)))
+        return int(np.ceil((self.l_d) / float(self.batch_size)))
 
     def __open_png_y(self, file_path):
         img = cv2.imread(file_path)
@@ -135,7 +137,7 @@ model_checkpoint = ModelCheckpoint(
     save_weights_only=True,
     monitor='val_output_4_loss',
     mode='min',
-    filepath=os.path.join(RESULTS, 'saved_weights/{epoch}-weights_unetpp.hdf5')
+    filepath=os.path.join(RESULTS, 'saved_weights/{epoch}-weights_unetpp_' + MODE + '.hdf5')
 )
 
 class HistoryWriter(tf.keras.callbacks.Callback):
@@ -158,7 +160,7 @@ class HistoryWriter(tf.keras.callbacks.Callback):
         with open(self.file_path, 'wb') as f:
             pickle.dump(self.history, f)
 
-historyWriter = HistoryWriter(os.path.join(RESULTS, "model_history"))
+historyWriter = HistoryWriter(os.path.join(RESULTS, f"model_history_{MODE}"))
 
 from Model.model_unet import make_unet2p
 

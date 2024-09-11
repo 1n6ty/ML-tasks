@@ -1,11 +1,26 @@
 import tensorflow as tf
 from tensorflow import keras
-from keras.regularizers import l2
-from keras.layers import Conv2D, MaxPool2D, Input, Dropout, concatenate, UpSampling2D, BatchNormalization, Layer, Softmax, Conv2DTranspose
-from keras.models import Model
+from tensorflow.python.keras.regularizers import l2
+from tensorflow.python.keras.layers import Conv2D, MaxPool2D, Input, Dropout, concatenate, UpSampling2D, Layer, Softmax, Conv2DTranspose, Layer
+from tensorflow.python.keras.models import Model
 
 act = 'elu'
 dropout_rate = 0.1
+
+class BatchNormalization(Layer):
+    def __init__(self, gamma = 1e-6, name=None, dtype="float32", dynamic=False, **kwargs):
+        super().__init__(trainable=False, name=name, dtype=dtype, dynamic=dynamic, **kwargs)
+
+        self.gamma = gamma
+        self.datatype = dtype
+
+    def call(self, inputs, *args, **kwargs):
+        inputs = tf.cast(inputs, dtype=self.datatype)
+        
+        mean = tf.reduce_mean(inputs)
+        std = tf.reduce_mean(tf.square(-inputs + mean))
+
+        return (inputs - mean) / tf.sqrt(std + self.gamma)
 
 def standard_unit(input_tensor, filters, kernel_size=3, name=None):
     x = Conv2D(filters, (kernel_size, kernel_size), activation=act, kernel_initializer = 'he_normal', padding='same', kernel_regularizer=l2(1e-4))(input_tensor)
@@ -14,7 +29,7 @@ def standard_unit(input_tensor, filters, kernel_size=3, name=None):
 
     x = Conv2D(filters, (kernel_size, kernel_size), activation=act, kernel_initializer = 'he_normal', padding='same', kernel_regularizer=l2(1e-4))(x)
     x = Dropout(dropout_rate)(x)
-    x = BatchNormalization(name=name)(x)
+    x = BatchNormalization()(x)
 
     return x
 
