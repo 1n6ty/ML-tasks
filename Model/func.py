@@ -1,6 +1,17 @@
 import numpy as np
+import tensorflow as tf
 import cv2
 from itertools import product
+
+def get_PE_matrix(rows: int, cols: int, n=100000) -> tf.Tensor:
+    """
+    Generates Positional Encoding Matrix
+    """
+    common_col = tf.range(0, rows, 1, dtype=tf.float32)
+    return tf.transpose(
+            tf.concat([tf.expand_dims(tf.math.cos(common_col / (n ** ((d - 1) / cols))), axis=0) if d % 2 else tf.expand_dims(tf.math.sin(common_col / (n ** (d / cols))), axis=0) for d in range(cols)], axis=0),
+            perm=[1, 0]
+    )
 
 def get_borders(data: np.ndarray) -> np.ndarray: 
     """

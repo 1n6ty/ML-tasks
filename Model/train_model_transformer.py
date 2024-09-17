@@ -14,6 +14,7 @@ from tensorflow import keras
 from tensorflow.keras.utils import Sequence
 from tensorflow.keras.callbacks import ModelCheckpoint
 from tensorflow.keras.losses import BinaryCrossentropy
+from func import get_PE_matrix
 
 # Init Global Variables
 DATA_DIR = os.path.abspath('../DataSet')
@@ -172,15 +173,12 @@ class HistoryWriter(tf.keras.callbacks.Callback):
 
 historyWriter = HistoryWriter(os.path.join(RESULTS, f"model_history_{MODE}"))
 
-from model_unet import make_unet2p
+from model_unet_transformer import make_unet_transformer
 
-model_unet = make_unet2p((*IMG_SHAPE, 1), filters=[64, 128, 256, 512, 1024], deep_supervision=True)
-model_unet.compile(optimizer="adam", loss={
-    'output_1': bce,
-    'output_2': bce,
-    'output_3': bce,
-    'output_4': bce
-}, loss_weights=[1.0, 1.0, 1.0, 1.0], metrics=[dice_coef])
+pixels = IMG_SHAPE[0] * IMG_SHAPE[1]
+model_unet = make_unet_transformer((*IMG_SHAPE, 1), filters=[64, 128, 256, 512, 1024], PE=[get_PE_matrix(pixels, 64), get_PE_matrix(pixels / 4, 128), get_PE_matrix(pixels / 16, 256), get_PE_matrix(pixels / 64, 512), get_PE_matrix(pixels / 256, 1024)], heads_num=8)
+model_unet.compile(optimizer="adam", loss=bce, metrics=[dice_coef])
+
 if WEIGHTS2LOAD: model_unet.load_weights(WEIGHTS2LOAD)
 
 history_unet = model_unet.fit(x=cross_validation.data_gen, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_data=cross_validation.val_gen, callbacks=[model_checkpoint, historyWriter])
