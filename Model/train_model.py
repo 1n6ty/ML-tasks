@@ -13,7 +13,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.utils import Sequence
 from tensorflow.keras.callbacks import ModelCheckpoint
-from tensorflow.keras.losses import BinaryCrossentropy
+from tensorflow.keras.losses import BinaryCrossentropy, Dice
 
 # Init Global Variables
 DATA_DIR = os.path.abspath('../DataSet')
@@ -124,23 +124,16 @@ class CrossValidation:
 cross_validation = CrossValidation(FILE_DIRS["dicom"], FILE_DIRS["converted"], BATCH_SIZE, VALIDATION_NUM, IMG_SHAPE)
 
 # Training
-def make_bce_loss():
+def make_loss(smooth=1e-6):
     bce_func = BinaryCrossentropy(from_logits=True)
-    def bce_loss(y_true, y_pred):
+    dice = Dice()
+    def loss_f(y_true, y_pred):
         y_true, y_pred = tf.cast(y_true, dtype=tf.float32), tf.cast(y_pred, dtype=tf.float32)
-        return -bce_func(y_true, y_pred)
-    return bce_loss
 
-def make_dice_metric(smooth=1e-6):
-    def dice_metric(y_true, y_pred):
-        y_true, y_pred = tf.cast(y_true, dtype=tf.float32), tf.cast(y_pred, dtype=tf.float32)
-        nominator = 2 * tf.multiply(y_pred, y_true) + smooth
-        denominator = y_pred + y_true + smooth
-        return tf.divide(nominator, denominator)
-    return dice_metric
+        return bce_func(y_true, y_pred) + dice(y_true, y_pred)
+    return loss_f
 
-bce = make_bce_loss()
-dice_coef = make_dice_metric()
+loss_func = make_loss()
 
 model_checkpoint = ModelCheckpoint(
     save_best_only=True,
@@ -148,6 +141,14 @@ model_checkpoint = ModelCheckpoint(
     monitor='val_loss',
     mode='min',
     filepath=os.path.join(RESULTS, 'saved_weights/{epoch}_unetpp_' + MODE + '.weights.h5')
+)
+
+model_loss_checkpoint = ModelCheckpoint(
+    save_best_only=True,
+    save_weights_only=True,
+    monitor='loss',
+    mode='min',
+    filepath=os.path.join(RESULTS, 'saved_weights/loss_unetpp_' + MODE + '.weights.h5')
 )
 
 class HistoryWriter(tf.keras.callbacks.Callback):
@@ -176,11 +177,11 @@ from model_unet import make_unet2p
 
 model_unet = make_unet2p((*IMG_SHAPE, 1), filters=[64, 128, 256, 512, 1024], deep_supervision=True)
 model_unet.compile(optimizer="adam", loss={
-    'output_1': bce,
-    'output_2': bce,
-    'output_3': bce,
-    'output_4': bce
-}, loss_weights=[1.0, 1.0, 1.0, 1.0], metrics=[dice_coef])
+    'output_1': loss_func,
+    'output_2': loss_func,
+    'output_3': loss_func,
+    'output_4': loss_func
+}, loss_weights=[1.0, 1.0, 1.0, 1.0])
 if WEIGHTS2LOAD: model_unet.load_weights(WEIGHTS2LOAD)
 
-history_unet = model_unet.fit(x=cross_validation.data_gen, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_data=cross_validation.val_gen, callbacks=[model_checkpoint, historyWriter])
+history_unet = model_unet.fit(x=cross_validation.data_gen, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_data=cross_validation.val_gen, callbacks=[model_checkpoint, model_loss_checkpoint, historyWriter])
