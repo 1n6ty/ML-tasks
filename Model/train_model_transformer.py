@@ -34,7 +34,7 @@ VALIDATION_NUM = 50
 BATCH_SIZE = 8
 EPOCHS = 200
 
-WEIGHTS2LOAD = os.path.join(RESULTS, 'saved_weights/init_unetpp_' + MODE + '.weights.h5')
+WEIGHTS2LOAD = os.path.join(RESULTS, 'saved_weights/init_unettr_' + MODE + '.weights.h5')
 
 # Data Generator
 class Data_train_generator(Sequence):
@@ -126,7 +126,7 @@ cross_validation = CrossValidation(FILE_DIRS["dicom"], FILE_DIRS["converted"], B
 
 # Training
 def make_loss(smooth=1e-6):
-    bce_func = BinaryCrossentropy(from_logits=True)
+    bce_func = BinaryCrossentropy(from_logits=False)
     dice = Dice()
     def loss_f(y_true, y_pred):
         y_true, y_pred = tf.cast(y_true, dtype=tf.float32), tf.cast(y_pred, dtype=tf.float32)
@@ -141,7 +141,7 @@ model_checkpoint = ModelCheckpoint(
     save_weights_only=True,
     monitor='val_loss',
     mode='min',
-    filepath=os.path.join(RESULTS, 'saved_weights/{epoch}_unetpp_' + MODE + '.weights.h5')
+    filepath=os.path.join(RESULTS, 'saved_weights/{epoch}_unettr_' + MODE + '.weights.h5')
 )
 
 model_loss_checkpoint = ModelCheckpoint(
@@ -149,7 +149,7 @@ model_loss_checkpoint = ModelCheckpoint(
     save_weights_only=True,
     monitor='loss',
     mode='min',
-    filepath=os.path.join(RESULTS, 'saved_weights/loss_unetpp_' + MODE + '.weights.h5')
+    filepath=os.path.join(RESULTS, 'saved_weights/loss_unettr_' + MODE + '.weights.h5')
 )
 
 class HistoryWriter(tf.keras.callbacks.Callback):
@@ -159,15 +159,14 @@ class HistoryWriter(tf.keras.callbacks.Callback):
         self.file_path = file_path
 
     def on_train_begin(self, logs={}):
-        self.history={'output_4_loss': [], 'output_3_loss': [], 'output_2_loss': [], 'output_1_loss': [],
-                    'val_output_4_loss': [], 'val_output_3_loss': [], 'val_output_2_loss': [], 'val_output_1_loss': []}
+        self.history={'output_loss': [],
+                    'val_output_loss': []}
 
     def on_epoch_end(self, epoch, logs={}):
-        for num in ['1', '2', '3', '4']:
-            if logs.get(f'val_output_{num}_loss', None) != None:
-                self.history[f'val_output_{num}_loss'].append(logs.get(f'val_output_{num}_loss'))
-            if logs.get(f'output_{num}_loss', None) != None:
-                self.history[f'output_{num}_loss'].append(logs.get(f'output_{num}_loss'))
+        if logs.get('val_output_loss', None) != None:
+            self.history['val_output_loss'].append(logs.get('val_output_loss'))
+        if logs.get('output_loss', None) != None:
+            self.history['output_loss'].append(logs.get('output_loss'))
         
         with open(self.file_path, 'wb') as f:
             pickle.dump(self.history, f)
@@ -177,8 +176,8 @@ historyWriter = HistoryWriter(os.path.join(RESULTS, f"model_history_{MODE}"))
 from model_unet_transformer import make_unet_transformer
 
 pixels = IMG_SHAPE[0] * IMG_SHAPE[1]
-model_unet = make_unet_transformer((*IMG_SHAPE, 1), filters=[64, 128, 256, 512, 1024], PE=[get_PE_matrix(pixels, 64), get_PE_matrix(pixels / 4, 128), get_PE_matrix(pixels / 16, 256), get_PE_matrix(pixels / 64, 512), get_PE_matrix(pixels / 256, 1024)], heads_num=8)
-model_unet.compile(optimizer="adam", loss=loss_func)
+model_unet = make_unet_transformer((*IMG_SHAPE, 1), filters=[64, 128, 256, 512, 1024], PE=[get_PE_matrix(pixels, 64), get_PE_matrix(pixels / 4, 128), get_PE_matrix(pixels / 16, 256), get_PE_matrix(pixels / 64, 512), get_PE_matrix(pixels / 256, 1024)], heads_num=1)
+model_unet.compile(optimizer="adam", loss=loss_func, metrics=[Dice()])
 
 if WEIGHTS2LOAD: model_unet.load_weights(WEIGHTS2LOAD)
 

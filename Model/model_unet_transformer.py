@@ -3,12 +3,85 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.regularizers import l2
-from tensorflow.keras.layers import Conv2D, MaxPool2D, Input, Dropout, concatenate, UpSampling2D, Layer, Softmax, Conv2DTranspose, Layer, BatchNormalization, MultiHeadAttention, Reshape, Activation, multiply
+from tensorflow.keras.layers import Conv2D, MaxPool2D, Input, Dropout, concatenate, UpSampling2D, Layer, Softmax, Layer, BatchNormalization, Reshape, Activation, multiply, Dot, Permute
 from tensorflow.keras.models import Model
 from tensorflow.python.keras.engine.keras_tensor import KerasTensor
 
 act = 'elu'
 dropout_rate = 0.1
+
+class Attention(Layer):
+    """
+        Basic Attention layer
+
+        Softmax(QK^T)V
+    """
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+        self.softmax_layer = Softmax(axis=-1)
+        self.dot_layer = Dot(axes=(1, 2))
+        self.permute_layer = Permute((2, 1))
+
+    def build(self, input_shape: list) -> None:
+        self.sigma = tf.math.sqrt(tf.cast(input_shape[0][2], dtype=tf.float32))
+        
+        self.q_weights = self.add_weight(
+            shape=(input_shape[0][2], input_shape[0][2]),
+            initializer="random_normal",
+            trainable=True
+        )
+        self.q_bias = self.add_weight(
+            shape=(input_shape[0][1], input_shape[0][2]),
+            initializer="random_normal",
+            trainable=True
+        )
+
+        self.k_weights = self.add_weight(
+            shape=(input_shape[1][2], input_shape[1][2]),
+            initializer="random_normal",
+            trainable=True
+        )
+        self.k_bias = self.add_weight(
+            shape=(input_shape[1][1], input_shape[1][2]),
+            initializer="random_normal",
+            trainable=True
+        )
+
+        self.v_weights = self.add_weight(
+            shape=(input_shape[2][2], input_shape[2][2]),
+            initializer="random_normal",
+            trainable=True
+        )
+        self.v_bias = self.add_weight(
+            shape=(input_shape[2][1], input_shape[2][2]),
+            initializer="random_normal",
+            trainable=True
+        )
+
+    def call(self, inputs: list) -> KerasTensor:
+        """
+            Call Attention Layer
+
+            Inputs
+            -------
+
+            `list`[query, key, value], `shape` of each should be (batch_size, features, dim)
+        """
+        Q_weighted = self.dot_layer(inputs[0], self.q_weights) + self.q_bias
+        K_weighted = self.dot_layer(inputs[1], self.k_weights) + self.k_bias
+        V_weighted = self.dot_layer(inputs[2], self.v_weights) + self.v_bias
+
+        return self.dot_layer(
+            self.softmax_layer(
+                self.dot_layer(
+                    Q_weighted, self.permute_layer(K_weighted)
+                ) / self.sigma
+            ), V_weighted
+        )
+    
+    def compute_output_shape(self, input_shape: list) -> tf.Tensor:
+        return input_shape[0]
 
 def standard_unit(input_tensor: KerasTensor, filters: int, kernel_size=3, name=None) -> KerasTensor:
     """
@@ -35,7 +108,9 @@ def MHSA(x: KerasTensor, layer_num: int, input_shape: tuple[int, int], filter_x:
         heads_num - number of attention heads
     """
     x = Reshape((int(input_shape[0] * input_shape[1] / (4 ** (layer_num - 1))), filter_x))(x) + PE
-    x = MultiHeadAttention(heads_num, key_dim=filter_x)(query=x, key=x, value=x)
+    x = Attention()([x, x, x])
+    for i in range(heads_num - 1):
+        x += Attention()([x, x, x])
     return Reshape((int(input_shape[0] / (2 ** (layer_num - 1))), int(input_shape[1] / (2 ** (layer_num - 1))), filter_x))(x)
 
 def MHCA(x_inp: KerasTensor, y_inp: KerasTensor, layer_num: int, input_shape: tuple[int, int], filter_x: int, PE_x: tf.Tensor, heads_num: int) -> KerasTensor:
@@ -54,7 +129,9 @@ def MHCA(x_inp: KerasTensor, y_inp: KerasTensor, layer_num: int, input_shape: tu
     x = Reshape(map_shape)(x_inp) + PE_x
     y = Reshape(map_shape)(y_inp) + PE_x
 
-    ca = MultiHeadAttention(heads_num, key_dim=filter_x)(query=y, key=y, value=x)
+    ca = Attention()([y, y, x])
+    for i in range(heads_num - 1):
+        ca += Attention()([y, y, x])
     ca = Reshape((int(input_shape[0] / (2 ** (layer_num - 1))), int(input_shape[1] / (2 ** (layer_num - 1))), filter_x))(ca)
     ca = Conv2D(1, (1, 1), activation='relu', kernel_initializer = 'he_normal', padding='same', kernel_regularizer=l2(1e-4))(ca)
     ca = BatchNormalization()(ca)

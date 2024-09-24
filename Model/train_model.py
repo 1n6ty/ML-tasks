@@ -76,7 +76,7 @@ class Data_train_generator(Sequence):
         batch_x = np.array(list(map(self.__open_dcm_x, self.data[index * self.batch_size: (index + 1) * self.batch_size])))
         batch_y = np.array(list(map(self.__open_png_y, self.labels[index * self.batch_size: (index + 1) * self.batch_size])))
 
-        return batch_x, batch_y
+        return batch_x, {"output_1": batch_y, "output_2": batch_y, "output_3": batch_y, "output_4": batch_y}
 
     def on_epoch_end(self):
         self.update_func()
@@ -125,7 +125,7 @@ cross_validation = CrossValidation(FILE_DIRS["dicom"], FILE_DIRS["converted"], B
 
 # Training
 def make_loss(smooth=1e-6):
-    bce_func = BinaryCrossentropy(from_logits=True)
+    bce_func = BinaryCrossentropy(from_logits=False)
     dice = Dice()
     def loss_f(y_true, y_pred):
         y_true, y_pred = tf.cast(y_true, dtype=tf.float32), tf.cast(y_pred, dtype=tf.float32)
@@ -176,12 +176,7 @@ historyWriter = HistoryWriter(os.path.join(RESULTS, f"model_history_{MODE}"))
 from model_unet import make_unet2p
 
 model_unet = make_unet2p((*IMG_SHAPE, 1), filters=[64, 128, 256, 512, 1024], deep_supervision=True)
-model_unet.compile(optimizer="adam", loss={
-    'output_1': loss_func,
-    'output_2': loss_func,
-    'output_3': loss_func,
-    'output_4': loss_func
-}, loss_weights=[1.0, 1.0, 1.0, 1.0])
+model_unet.compile(optimizer="adam", loss=[loss_func, loss_func, loss_func, loss_func], loss_weights=[1.0, 1.0, 1.0, 1.0], metrics=[Dice(), Dice(), Dice(), Dice()])
 if WEIGHTS2LOAD: model_unet.load_weights(WEIGHTS2LOAD)
 
 history_unet = model_unet.fit(x=cross_validation.data_gen, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_data=cross_validation.val_gen, callbacks=[model_checkpoint, model_loss_checkpoint, historyWriter])
