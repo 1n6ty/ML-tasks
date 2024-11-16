@@ -8,19 +8,16 @@ DATA_DIR = os.path.abspath('../Data/spine-segmentation')
 def regression_func(x, n, t):
     return (x ** t) * ((1 - x) ** (n - t))
 
-def kernel_func(x):
-    return (15/16) * (1 - x ** 2) ** 2 if abs(x) <= 1 else 0.0
-
 regression_params = {
-    "n": 10,
+    "n": 21,
     "regression_func": regression_func,
     "quantile_part_e": 0.001,
     "quantile_iterations": 16
 }
 
-threshold_e = 0.001
+threshold_e = 0.0001
 
-def __open_png(file_path_side, file_path_frontal, new_image_size):
+def __open_png(file_path_side, file_path_frontal, new_image_size = None):
     img_side = cv2.imread(file_path_side)
     img_frontal = cv2.imread(file_path_frontal)
 
@@ -40,11 +37,12 @@ def __open_png(file_path_side, file_path_frontal, new_image_size):
     img_side_hip = cv2.inRange(img_side_hip, (210, 0, 0), (256, 40, 40))
     img_frontal_hip = cv2.inRange(img_frontal_hip, (210, 0, 0), (256, 40, 40))
     
-    img_side = cv2.resize(img_side, new_image_size[::-1], interpolation=cv2.INTER_CUBIC)
-    img_frontal = cv2.resize(img_frontal, new_image_size[::-1], interpolation=cv2.INTER_CUBIC)
+    if new_image_size != None:
+        img_side = cv2.resize(img_side, new_image_size[::-1], interpolation=cv2.INTER_CUBIC)
+        img_frontal = cv2.resize(img_frontal, new_image_size[::-1], interpolation=cv2.INTER_CUBIC)
 
-    img_side_hip = cv2.resize(img_side_hip, new_image_size[::-1], interpolation=cv2.INTER_CUBIC)
-    img_frontal_hip = cv2.resize(img_frontal_hip, new_image_size[::-1], interpolation=cv2.INTER_CUBIC)
+        img_side_hip = cv2.resize(img_side_hip, new_image_size[::-1], interpolation=cv2.INTER_CUBIC)
+        img_frontal_hip = cv2.resize(img_frontal_hip, new_image_size[::-1], interpolation=cv2.INTER_CUBIC)
 
     return (
         np.array(img_side, dtype="float32") / np.max(img_side), 
@@ -53,7 +51,7 @@ def __open_png(file_path_side, file_path_frontal, new_image_size):
         np.array(img_frontal_hip, dtype="float32") / np.max(img_frontal_hip)
     )
 
-pixel_array_side, pixel_array_frontal, pixel_array_side_hip, pixel_array_frontal_hip = __open_png(os.path.join(DATA_DIR, "side.png"), os.path.join(DATA_DIR, "frontal.png"), (1760, 768))
+pixel_array_side, pixel_array_frontal, pixel_array_side_hip, pixel_array_frontal_hip = __open_png(os.path.join(DATA_DIR, "side_1.png"), os.path.join(DATA_DIR, "frontal_1.png"))
 pixel_spacing = np.array([0.5, 0.5])
 
 def height_corr_frontal(pixel_array_frontal, pixel_array_side_hip, pixel_array_frontal_hip):
@@ -93,9 +91,10 @@ def compute_regression_metric(borders, pixel_array, y, mode):
                 inter[i + borders[0, 0], j] = -2
 
     IOU_white = np.sum(np.where(inter > 1.5, 1, 0)) / np.sum(pixel_array)
-    IOU_black = 1 - np.sum(np.where(inter < -1.5, 1, 0)) / (y.shape[0] * (borders[1, 1] - borders[0, 1] + 1)) 
+    #IOU_black = 1 - np.sum(np.where(inter < -1.5, 1, 0)) / (y.shape[0] * (borders[1, 1] - borders[0, 1] + 1))
                 
-    return 2 - (IOU_white + IOU_black)
+    #return 2 - (IOU_white + IOU_black)
+    return 1 - IOU_white
 
 def get_lr_quantilepart(matrixes: tuple[np.ndarray, np.ndarray], iter: int, q_part: float, A: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -135,7 +134,11 @@ def get_quantile_part_brute(borders, pixel_array, regression_params, matrixes, A
         metrics = []
         with Pool() as p:
             metrics = p.starmap(get_quantile_metric, [(borders, pixel_array, regression_params, matrixes, A, init + t * power, mode) for t in gen])
-        init += gen[np.argmin(metrics)] * power
+        min_metric = [metrics[0], 0]
+        for m in range(1, len(metrics)):
+            if min_metric[0] > metrics[m]: min_metric = [metrics[m], m]
+
+        init += gen[min_metric[1]] * power
 
     return init
 
@@ -162,7 +165,25 @@ def get_radius(y, pivot, delta):
         np.sqrt(np.sum((pivot - right_coords) ** 2))
     ])
 
-def compute_regression_vertebra_metric(vertebra, side_x_fst, side_x_sec, borders, pixel_array, y, mode):
+def get_rad_list(y):
+    gamma = 1e-6 # used as gradient of a straight horizontal line
+    y_m, y_l, y_r = [i.astype(dtype=np.float32) for i in y]
+    
+    dy_m = np.concatenate([y_m[1:], y_m[-1:]]) - y_m; dy_m = np.where(dy_m != 0, dy_m, np.full_like(dy_m, gamma))
+    grad = np.divide(-np.ones_like(y_m, dtype=np.float32), dy_m) # tan of normal
+
+    rad = []
+
+    for x in range(grad.shape[0]):
+        delta = np.array([1.0, grad[x]], dtype=np.float32); delta = delta / np.max(np.abs(delta))
+        pivot = np.array([x, y_m[x]], dtype=np.float32)
+
+        rad.append(get_radius(y, pivot, delta))
+
+    return np.array(rad)
+
+
+def compute_regression_vertebra_metric(vertebra, side_x, borders, pixel_array, y, mode):
     if not (0 <= y[0] < pixel_array.shape[1] and 0 <= y[-1] < pixel_array.shape[1] and y.shape[0] > 1):
         return float("inf")
 
@@ -177,8 +198,8 @@ def compute_regression_vertebra_metric(vertebra, side_x_fst, side_x_sec, borders
         pivot_a = np.copy(vertebra[0])
         delta_a = vertebra[1] - vertebra[0]
 
-        pivot_b = np.array([side_x_fst[0] + borders[0, 0], y[0]])
-        delta_b = np.array([side_x_sec[0] + borders[0, 0], y[-1]]) - pivot_b
+        pivot_b = np.array([side_x[0] + borders[0, 0], y[0]])
+        delta_b = np.array([side_x[2] + borders[0, 0], y[-1]]) - pivot_b
         if pivot_a[0] == pivot_b[0] and (delta_a[0] == 0 or pivot_a[1] == pivot_b[1]):
             vertebra_c[0] = pivot_b
         else:
@@ -188,8 +209,8 @@ def compute_regression_vertebra_metric(vertebra, side_x_fst, side_x_sec, borders
         pivot_a = np.copy(vertebra[2])
         delta_a = vertebra[3] - vertebra[2]
 
-        pivot_b = np.array([side_x_fst[0] + borders[0, 0], y[0]])
-        delta_b = np.array([side_x_sec[0] + borders[0, 0], y[-1]]) - pivot_b
+        pivot_b = np.array([side_x[0] + borders[0, 0], y[0]])
+        delta_b = np.array([side_x[2] + borders[0, 0], y[-1]]) - pivot_b
         if pivot_a[0] == (pivot_b + delta_b)[0] and (delta_a[0] == 0 or pivot_a[1] == (pivot_b + delta_b)[1]):
             vertebra_c[2] = pivot_b + delta_b
         else:
@@ -199,8 +220,8 @@ def compute_regression_vertebra_metric(vertebra, side_x_fst, side_x_sec, borders
         pivot_a = np.copy(vertebra[0])
         delta_a = vertebra[1] - vertebra[0]
 
-        pivot_b = np.array([side_x_fst[1] + borders[0, 0], y[0]])
-        delta_b = np.array([side_x_sec[1] + borders[0, 0], y[-1]]) - pivot_b
+        pivot_b = np.array([side_x[1] + borders[0, 0], y[0]])
+        delta_b = np.array([side_x[3] + borders[0, 0], y[-1]]) - pivot_b
         if pivot_a[0] == pivot_b[0] and (delta_a[0] == 0 or pivot_a[1] == pivot_b[1]):
             vertebra_c[1] = pivot_b
         else:
@@ -210,8 +231,8 @@ def compute_regression_vertebra_metric(vertebra, side_x_fst, side_x_sec, borders
         pivot_a = np.copy(vertebra[2])
         delta_a = vertebra[3] - vertebra[2]
 
-        pivot_b = np.array([side_x_fst[1] + borders[0, 0], y[0]])
-        delta_b = np.array([side_x_sec[1] + borders[0, 0], y[-1]]) - pivot_b
+        pivot_b = np.array([side_x[1] + borders[0, 0], y[0]])
+        delta_b = np.array([side_x[3] + borders[0, 0], y[-1]]) - pivot_b
         if pivot_a[0] == (pivot_b + delta_b)[0] and (delta_a[0] == 0 or pivot_a[1] == (pivot_b + delta_b)[1]):
             vertebra_c[3] = pivot_b + delta_b
         else:
@@ -225,12 +246,12 @@ def compute_regression_vertebra_metric(vertebra, side_x_fst, side_x_sec, borders
 
     return 1 - IOU_white + IOU_black
 
-def get_quantile_metric_vertebra(vertebra, side_x_fst, side_x_sec, borders, pixel_array, regression_params, matrixes, A, t, mode):
+def get_quantile_metric_vertebra(vertebra, side_x, borders, pixel_array, regression_params, matrixes, A, t, mode):
     y_new = get_lr_quantilepart(matrixes, regression_params["quantile_iterations"], t, A)[0]
 
-    return compute_regression_vertebra_metric(vertebra, side_x_fst, side_x_sec, borders, pixel_array, y_new, mode)
+    return compute_regression_vertebra_metric(vertebra, side_x, borders, pixel_array, y_new, mode)
 
-def get_quantile_vertebra_side_part_brute(vertebra, side_x_fst, side_x_sec, borders, pixel_array, regression_params, matrixes, A, mode):
+def get_quantile_vertebra_side_part_brute(vertebra, side_x, borders, pixel_array, regression_params, matrixes, A, mode):
     e_log = int(np.log10(regression_params["quantile_part_e"])) * -1
     init = 0
     for t in range(1, e_log + 1):
@@ -238,10 +259,19 @@ def get_quantile_vertebra_side_part_brute(vertebra, side_x_fst, side_x_sec, bord
         gen = range(1, 10) if power == 0.1 else range(-9, 10)
         metrics = []
         with Pool() as p:
-            metrics = p.starmap(get_quantile_metric_vertebra, [(vertebra, side_x_fst, side_x_sec, borders, pixel_array, regression_params, matrixes, A, init + t * power, mode) for t in gen])
-        init += gen[np.argmin(metrics)] * power
+            metrics = p.starmap(get_quantile_metric_vertebra, [(vertebra, side_x, borders, pixel_array, regression_params, matrixes, A, init + t * power, mode) for t in gen])
+        min_metric = [metrics[0], 0]
+        for m in range(1, len(metrics)):
+            if min_metric[0] >= metrics[m]: min_metric = [metrics[m], m]
+
+        init += gen[min_metric[1]] * power
 
     return init
+
+def fullfill_matrixes(lr_matrixes, quantile_matrixes):
+    y_l, y_r = np.dot(lr_matrixes[0], lr_matrixes[1]) + np.dot(quantile_matrixes[0], np.where(lr_matrixes[1] < 0.5, np.diag(np.ones_like(lr_matrixes[0])), 0)), np.dot(lr_matrixes[2], lr_matrixes[3]) + np.dot(quantile_matrixes[2], np.where(lr_matrixes[3] < 0.5, np.diag(np.ones_like(lr_matrixes[2])), 0))
+    matrixes = (y_l, np.diag(np.ones_like(y_l)), y_r, np.diag(np.ones_like(y_r)))
+    return matrixes
 
 def adjust_corners(matrixes, quantile_matrixes, vertebras_corners, borders, pixel_array, regression_params, start, finish, strip=True):
     y_l, y_r = np.dot(matrixes[0], matrixes[1]) + np.dot(quantile_matrixes[0], np.where(matrixes[1] < 0.5, np.diag(np.ones_like(matrixes[0])), 0)), np.dot(matrixes[2], matrixes[3]) + np.dot(quantile_matrixes[2], np.where(matrixes[3] < 0.5, np.diag(np.ones_like(matrixes[2])), 0))
@@ -342,7 +372,7 @@ def adjust_corners(matrixes, quantile_matrixes, vertebras_corners, borders, pixe
 
     return vertebras_corners
 
-def get_vertebras_corners(data: np.ndarray, borders: np.ndarray, y: tuple[np.ndarray, np.ndarray, np.ndarray], threshold: float, strip=True) -> np.ndarray:
+def get_vertebras_corners(data: np.ndarray, borders: np.ndarray, y: tuple[np.ndarray, np.ndarray, np.ndarray], threshold: float) -> np.ndarray:
     """
     Based on data image (0 <= pixel <= 1) and (middle regression, right-edge, left-edge) computes corners coords [row, col] of each vertebra.\n
     if line_mean >= threshold then it is vertebra, else - gap. 
@@ -355,7 +385,10 @@ def get_vertebras_corners(data: np.ndarray, borders: np.ndarray, y: tuple[np.nda
     dy_m = np.concatenate([y_m[1:], y_m[-1:]]) - y_m; dy_m = np.where(dy_m != 0, dy_m, np.full_like(dy_m, gamma))
     grad = np.divide(-np.ones_like(y_m, dtype=np.float32), dy_m) # tan of normal
 
-    prev_state = False # True - previous state was VERTEBRA, False - GAP
+    r_list = get_rad_list(y)
+    
+    prev_points = [np.array([borders[0, 0], borders[0, 1]], dtype=np.float32), np.array([borders[0, 0], borders[1, 1]], dtype=np.float32)]
+    prev_state = False # True - previous state was VERTEBRAE, False - GAP
     for x in range(grad.shape[0]):
         delta = np.array([1.0, grad[x]], dtype=np.float32); delta = delta / np.max(np.abs(delta))
         left_coords, right_coords, pivot = np.array([x, y_m[x]], dtype=np.float32), np.array([x, y_m[x]], dtype=np.float32), np.array([x, y_m[x]], dtype=np.float32)
@@ -363,7 +396,7 @@ def get_vertebras_corners(data: np.ndarray, borders: np.ndarray, y: tuple[np.nda
         reach_edge = [False, False] # indicator of reaching the edge [left, right] by line
         summary = np.zeros(shape=2, dtype=np.float32) # saving [sum, steps]
 
-        r = get_radius(y, pivot, delta)
+        r = r_list[x]
         while not all(reach_edge):
             if not reach_edge[0]:
                 if (0 <= left_coords[0] < y_m.shape[0]) and (0 < left_coords[1]) and np.sqrt(np.sum((pivot - left_coords) ** 2)) < r * 3:
@@ -399,17 +432,19 @@ def get_vertebras_corners(data: np.ndarray, borders: np.ndarray, y: tuple[np.nda
                     prev_state = True
             else:
                 if prev_state:
-                    vertebras += [left_coords, right_coords]
+                    vertebras += prev_points
                     prev_state = False
         else:
             if prev_state:
-                vertebras += [left_coords, right_coords]
+                vertebras += prev_points
                 prev_state = False
+        
+        prev_points = [left_coords, right_coords]
 
     if len(vertebras) % 4 != 0:
         vertebras = [*vertebras, np.array([borders[1, 0], borders[1, 1]], dtype=np.float32), np.array([borders[1, 0], borders[0, 1]], dtype=np.float32)]
 
-    if len(vertebras) >= 4 and strip:
+    if len(vertebras) >= 4:
         vertebras[0] = np.array([borders[0, 0], borders[0, 1]], dtype=np.float32)
         vertebras[1] = np.array([borders[0, 0], borders[1, 1]], dtype=np.float32)
         vertebras[-1] = np.array([borders[1, 0], borders[0, 1]], dtype=np.float32)
@@ -420,14 +455,16 @@ def get_vertebras_corners(data: np.ndarray, borders: np.ndarray, y: tuple[np.nda
 def corners_metric(pixel_array, vertebras_corners):
     if vertebras_corners.shape[0] > 96:
         return float("inf")
+
+    pixel_array_cpy = np.where(pixel_array > 0.5, 1, 0)
+
     inter = np.zeros_like(pixel_array)
     for c in range(0, vertebras_corners.shape[0], 4):
         cv2.fillConvexPoly(inter, np.array([*vertebras_corners[c: c + 2][::, ::-1].astype(np.int32), *vertebras_corners[c + 2: c + 4][::-1, ::-1].astype(np.int32)]), 1)
 
-    IOU_white = np.sum(np.where(inter + pixel_array > 1.5, 1, 0)) / np.sum(np.where(inter + pixel_array > 0.5, 1, 0))
-    IOU_black = np.sum(np.where(inter + pixel_array < 1.5, 1, 0)) / (pixel_array.shape[0] * pixel_array.shape[1] - np.sum(pixel_array))
-                
-    return 1 - IOU_white + IOU_black
+    IOU_white = np.sum(np.where(np.multiply(inter, pixel_array_cpy) > 0.5, 1, 0)) / np.sum(np.where(inter + pixel_array_cpy > 0.5, 1, 0))
+    
+    return 1 - IOU_white
 
 def get_corners_metric(borders, pixel_array, y, t):
     vertebras_corners = get_vertebras_corners(pixel_array, borders, y, t)
@@ -442,18 +479,24 @@ def get_corners_threshold_brute(borders, pixel_array, threshold_e, y):
         metrics = []
         with Pool() as p:
             metrics = p.starmap(get_corners_metric, [(borders, pixel_array, y, init + t * power) for t in gen])
-        init += gen[np.argmin(metrics)] * power
+        min_metric = [metrics[0], 0]
+        for m in range(1, len(metrics)):
+            if min_metric[0] >= metrics[m]: min_metric = [metrics[m], m]
+
+        init += gen[min_metric[1]] * power
 
     return init
 
-q_coef_left = get_quantile_part_brute(borders_side, pixel_array_side, regression_params, matrixes_side[:2], A_side, "left")
-q_coef_right = get_quantile_part_brute(borders_side, pixel_array_side, regression_params, matrixes_side[2:], A_side, "right")
-quantile_matrixes_left = get_lr_quantilepart(matrixes_side[:2], regression_params["quantile_iterations"], q_coef_left, A_side)
-quantile_matrixes_right = get_lr_quantilepart(matrixes_side[2:], regression_params["quantile_iterations"], q_coef_right, A_side)
+q_coef_left_side = 0.222 #get_quantile_part_brute(borders_side, pixel_array_side, regression_params, matrixes_side[:2], A_side, "left")
+q_coef_right_side = 0.305 #get_quantile_part_brute(borders_side, pixel_array_side, regression_params, matrixes_side[2:], A_side, "right")
+quantile_matrixes_left_side = get_lr_quantilepart(matrixes_side[:2], regression_params["quantile_iterations"], q_coef_left_side, A_side)
+quantile_matrixes_right_side = get_lr_quantilepart(matrixes_side[2:], regression_params["quantile_iterations"], q_coef_right_side, A_side)
 
-vertebras_threshold_side = get_corners_threshold_brute(borders_side, pixel_array_side, threshold_e, ((quantile_matrixes_left[0] + quantile_matrixes_right[0]) / 2, quantile_matrixes_left[0], quantile_matrixes_right[0]))
-vertebras_corners_side = get_vertebras_corners(pixel_array_side, borders_side, ((quantile_matrixes_left[0] + quantile_matrixes_right[0]) / 2, quantile_matrixes_left[0], quantile_matrixes_right[0]), vertebras_threshold_side)
-print(q_coef_left, q_coef_right, vertebras_threshold_side)
+full_matrixes_side = fullfill_matrixes(matrixes_side, (*quantile_matrixes_left_side, *quantile_matrixes_right_side))
+
+vertebras_threshold_side = 0.248 #get_corners_threshold_brute(borders_side, pixel_array_side, threshold_e, ((quantile_matrixes_left_side[0] + quantile_matrixes_right_side[0]) / 2, quantile_matrixes_left_side[0], quantile_matrixes_right_side[0]))
+print(q_coef_left_side, q_coef_right_side, vertebras_threshold_side)
+vertebras_corners_side = get_vertebras_corners(pixel_array_side, borders_side, ((quantile_matrixes_left_side[0] + quantile_matrixes_right_side[0]) / 2, quantile_matrixes_left_side[0], quantile_matrixes_right_side[0]), vertebras_threshold_side)
 
 q_coef_left_front = get_quantile_part_brute(borders_frontal, pixel_array_frontal, regression_params, matrixes_frontal[:2], A_frontal, "left")
 q_coef_right_front = get_quantile_part_brute(borders_frontal, pixel_array_frontal, regression_params, matrixes_frontal[2:], A_frontal, "right")
@@ -464,7 +507,6 @@ vertebras_threshold_front = get_corners_threshold_brute(borders_frontal, pixel_a
 vertebras_corners_front = get_vertebras_corners(pixel_array_frontal, borders_frontal, ((quantile_matrixes_left_front[0] + quantile_matrixes_right_front[0]) / 2, quantile_matrixes_left_front[0], quantile_matrixes_right_front[0]), vertebras_threshold_front)
 print(q_coef_left_front, q_coef_right_front, vertebras_threshold_front)
 
-vertebras_corners_side = adjust_corners(matrixes_side, (*quantile_matrixes_left, *quantile_matrixes_right), np.copy(vertebras_corners_side), borders_side, pixel_array_side, regression_params, 0, vertebras_corners_side.shape[0])
 
 vertebras_corners_front = adjust_corners(matrixes_frontal, (*quantile_matrixes_left_front, *quantile_matrixes_right_front), np.copy(vertebras_corners_front), borders_frontal, pixel_array_frontal, regression_params, 0, 4)
 vertebras_corners_front = adjust_corners(matrixes_frontal, (*quantile_matrixes_left_front, *quantile_matrixes_right_front), np.copy(vertebras_corners_front), borders_frontal, pixel_array_frontal, regression_params, vertebras_corners_front.shape[0] - 4, vertebras_corners_front.shape[0])
