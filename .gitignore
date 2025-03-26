@@ -1,3 +1,6 @@
 Data/*
+Results/*
 !Data/data-stays-here
-Model/__pycache__
+!Results/results-stays-here
+Model/**/__pycache__/**
+venv

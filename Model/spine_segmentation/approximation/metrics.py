@@ -32,18 +32,17 @@ def lr_q_metric(pixel_array: npt.NDArray[np.float32], borders: npt.NDArray[np.in
             Greater than -> spine-pixel
     """
 
-    inter = np.copy(pixel_array)
+    inter = np.zeros_like(pixel_array, dtype=np.float32)
 
     inter = cv2.fillConvexPoly(
         inter,
         np.array([
             *[[int(y[i]), i + borders[0, 0]] for i in range(y.shape[0])],
-            *([[borders[0, 1], borders[1, 0]], [borders[0, 1], borders[0, 0]]] if mode == "left" else [[borders[1, 1], borders[1, 0]], [borders[1, 1], borders[0, 0]]])
+            *([[borders[0, 1], borders[1, 0]], [borders[0, 1], borders[0, 0]]] if mode == "right" else [[borders[1, 1], borders[1, 0]], [borders[1, 1], borders[0, 0]]])
         ]),
         1.0
     )
 
     inter_white = np.multiply(inter, pixel_array)
-    IOU_white = np.sum(inter_white) / np.sum(inter)
 
-    return 1 - IOU_white
+    return 1 - (2 * np.sum(inter_white) / np.sum(pixel_array + inter))

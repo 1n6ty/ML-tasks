@@ -1,0 +1,22 @@
+[basic]
+
+RESULTS_DIR = "/home/in6ty/Documents/Projects/Spine_Segmentation/Results"
+ROUTES_FILE = "/home/in6ty/Documents/Projects/Spine_Segmentation/Data/routes.json"
+WEIGHTS2LOAD = ""
+
+[settings]
+
+IMG_SHAPE = [1760, 768]
+VALIDATION_NUM = 100
+BATCH_SIZE = 8
+EPOCHS = 200
+MODE = "side"
+WPART = "spine"
+
+[model]
+
+DEEP_SUPERVISION = true
+FILTERS = [32, 64, 128, 256, 512]
+CONV_ACTIVATION_FUNC = "relu"
+CONV_KERNEL_SIZE = 3
+DROPOUT_RATE = 0.1

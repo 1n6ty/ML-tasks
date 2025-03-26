@@ -6,8 +6,10 @@ import numpy as np
 import numpy.typing as npt
 
 from multiprocessing import Pool, Process, Manager
+from multiprocessing.pool import ThreadPool
 
-from .typings import *
+from spine_segmentation.approximation.typings import *
+from spine_segmentation.vertebraes.typings import VERTEBRAES_R_POINTS_PRJ
 from typing import Literal
 
 from .metrics import *
@@ -48,12 +50,14 @@ def get_lr_matrixes(pixel_array: npt.NDArray[np.float32], borders: npt.NDArray[n
 
     W_l, W_r = np.diag(exc_l), np.diag(exc_r) # making weight-matrix from indicator
     
-    return LR_MATRIXES(y_l, W_l, y_r, W_r)
+    return LR_MATRIXES(
+            left_edge_array=y_l,
+            left_edge_weights=W_l,
+            right_edge_array=y_r,
+            right_edge_weights=W_r
+        )
 
-def interpolate_edges(): # TODO Interpolation
-    pass
-
-def get_Vandermonde_matrix(start: float, stop: float, shape: tuple[int, int], f: REGRESSION_FUNC_PROTOCOL, manager_dict = None, name = None) -> npt.NDArray[np.float32]:
+def get_Vandermonde_matrix(start: float, stop: float, shape: tuple[int, int], f: REGRESSION_FUNC_PROTOCOL) -> npt.NDArray[np.float32]:
     """
     Computes Vandermonde's matrix of shape = `shape`
 
@@ -68,23 +72,12 @@ def get_Vandermonde_matrix(start: float, stop: float, shape: tuple[int, int], f:
         shape:
             Shape of return matrix
         \n
-        f(x, t, n):
+        f(x, n, t):
             Regression function to compute term
-        \n
-        manager_dict:
-            Sync manager (if used in Process)
-        \n
-        name:
-            Name to write in (if used in Process)
     """
 
     A = np.linspace(start, stop, int(shape[0]), dtype=np.float32)
-    A = np.array([[f(x, t, shape[1]) for t in range(shape[1])] for x in A], dtype=np.float32)
-
-    if manager_dict != None:
-        manager_dict[name] = A
-    else:
-        return A
+    return np.array([[f(x, shape[1], t) for t in range(shape[1] + 1)] for x in A], dtype=np.float32)
 
 def get_lr_Vandermonde_matrix(start: float, stop: float, lr_matrixes: LR_MATRIXES, f: REGRESSION_FUNC_PROTOCOL, n: int) -> VANDERMONDE_MATRIXES:
     """
@@ -107,23 +100,18 @@ def get_lr_Vandermonde_matrix(start: float, stop: float, lr_matrixes: LR_MATRIXE
         n:
             Number of cols in matrix (number of terms in polynom)
     """
-
-    manager = Manager()
-    A_dict = manager.dict()
     
-    left = Process(target=get_Vandermonde_matrix, args=(start, stop, (lr_matrixes.left_edge_array.shape[0], n), f, A_dict, "left"))
-    right = Process(target=get_Vandermonde_matrix, args=(start, stop, (lr_matrixes.right_edge_array.shape[0], n), f, A_dict, "right"))
-
-    left.start()
-    right.start()
-
-    left.join()
-    right.join()
+    with Pool(2) as p:
+        A = p.starmap(get_Vandermonde_matrix, [(start, stop, (lr_matrixes.left_edge_array.shape[0], n), f), (start, stop, (lr_matrixes.right_edge_array.shape[0], n), f)])
 
     return VANDERMONDE_MATRIXES(
-        left=A_dict["left"],
-        right=A_dict["right"]
+        left=A[0],
+        right=A[1]
     )
+
+#   -------------------------------------------------------------------
+#   Spine-edge approximation
+#   -------------------------------------------------------------------
 
 def __compute_q_coef(y_init: npt.NDArray[np.float32], W_init: npt.NDArray[np.float32], A: npt.NDArray[np.float32], regression_params: Q_REGRESSION_PARAMS, quantile: float) -> npt.NDArray[np.float32]:
     """
@@ -146,7 +134,8 @@ def __compute_q_coef(y_init: npt.NDArray[np.float32], W_init: npt.NDArray[np.flo
                 Quantile, value in [0, 1)
     """
 
-    divide_ind = int(y_init.shape[0] * quantile) if quantile < 1 else y_init.shape[0] - 1
+    divide_ind = int(y_init.shape[0] * (1 - quantile)) if quantile < 1 else y_init.shape[0] - 1
+
     for _ in range(regression_params.q_iter):
         c = np.dot(np.linalg.pinv(np.dot(np.dot(A.T, W_init), A)), np.dot(np.dot(A.T, W_init), y_init.T))
         y_new = np.dot(A, c.T)
@@ -156,8 +145,6 @@ def __compute_q_coef(y_init: npt.NDArray[np.float32], W_init: npt.NDArray[np.flo
 
         W_tmp = np.where(se < se_q, 1 - quantile, quantile)
         W_init = np.multiply(np.diag(W_tmp), W_init)
-
-        y_init = np.copy(y_new)
     
     return np.dot(np.linalg.pinv(np.dot(np.dot(A.T, W_init), A)), np.dot(np.dot(A.T, W_init), y_init.T))
 
@@ -200,7 +187,7 @@ def __get_q_metric_and_c(index: int, borders: npt.NDArray[np.int32], pixel_array
 
     return (lr_q_metric(pixel_array, borders, y_new, mode), c, index)
 
-def __search_q_coef(borders: npt.NDArray[np.int32], pixel_array: npt.NDArray[np.float32], regression_params: Q_REGRESSION_PARAMS, y_init: npt.NDArray[np.float32], W_init: npt.NDArray[np.float32], A: npt.NDArray[np.float32], mode: Literal["left", "right"], return_coefs: dict) -> npt.NDArray[np.float32]:
+def __search_q_coef(borders: npt.NDArray[np.int32], pixel_array: npt.NDArray[np.float32], regression_params: Q_REGRESSION_PARAMS, y_init: npt.NDArray[np.float32], W_init: npt.NDArray[np.float32], A: npt.NDArray[np.float32], mode: Literal["left", "right"], return_coefs: dict) -> None:
     """
         Searches for quantile regression coefficients
 
@@ -232,15 +219,14 @@ def __search_q_coef(borders: npt.NDArray[np.int32], pixel_array: npt.NDArray[np.
     """
     e_log = int(np.log10(regression_params.q_part_e)) * -1
     init = 0
-    for t in range(1, e_log + 1):
-        power = 10 ** -t
-        gen = range(1, 10) if t == 1 else range(-9, 10)
-        metrics = []
-        with Pool() as p:
+    with ThreadPool() as p:
+        for t in range(1, e_log + 1):
+            power = 10 ** -t
+            gen = range(1, 10) if t == 1 else range(-9, 10)
             metrics = p.starmap(__get_q_metric_and_c, [(t, borders, pixel_array, regression_params, y_init, W_init, A, init + t * power, mode) for t in gen])
-        
-        min_metric = min(metrics, key=__first_arg)
-        init += min_metric[2] * power
+
+            min_metric = min(metrics, key=__first_arg)
+            init += min_metric[2] * power
 
     return_coefs[mode] = min_metric[1]
 
@@ -264,14 +250,12 @@ def get_lr_q_coefs(borders: npt.NDArray[np.int32], pixel_array: npt.NDArray[np.f
             Vandermonde_matrixes:
                 Vandermonde_matrixes of `VANDERMONDE_MATRIXES` type
     """
-    y_left, W_left, y_right, W_right = lr_matrixes
-    A_left, A_right = Vandermonde_matrixes
 
     manager = Manager()
     c_dict = manager.dict()
 
-    left_process = Process(target=__search_q_coef, args=(borders, pixel_array, regression_params, y_left, W_left, A_left, "left", c_dict))
-    right_process = Process(target=__search_q_coef, args=(borders, pixel_array, regression_params, y_right, W_right, A_right, "right", c_dict))
+    left_process = Process(target=__search_q_coef, args=(borders, pixel_array, regression_params, lr_matrixes.left_edge_array, lr_matrixes.left_edge_weights, Vandermonde_matrixes.left, "left", c_dict))
+    right_process = Process(target=__search_q_coef, args=(borders, pixel_array, regression_params, lr_matrixes.right_edge_array, lr_matrixes.right_edge_weights, Vandermonde_matrixes.right, "right", c_dict))
 
     left_process.start()
     right_process.start()

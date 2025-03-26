@@ -26,11 +26,11 @@ class LR_MATRIXES(NamedTuple):
                 Diagonal 2d-array where diagonal elements are weights for `right_edge_array`        
     """
 
-    left_edge_array: npt.NDArray[np.float32]
-    left_edge_weights: npt.NDArray[np.float32]
+    left_edge_array: np.ndarray[np.float32]
+    left_edge_weights: np.ndarray[np.float32]
 
-    right_edge_array: npt.NDArray[np.float32]
-    right_edge_weights: npt.NDArray[np.float32]
+    right_edge_array: np.ndarray[np.float32]
+    right_edge_weights: np.ndarray[np.float32]
 
 class VANDERMONDE_MATRIXES(NamedTuple):
     """
@@ -45,8 +45,8 @@ class VANDERMONDE_MATRIXES(NamedTuple):
                 Vandermonde matrix for right edge
     """
 
-    left: npt.NDArray[np.float32]
-    right: npt.NDArray[np.float32]
+    left: np.ndarray[np.float32]
+    right: np.ndarray[np.float32]
 
 class REGRESSION_FUNC_PROTOCOL(Protocol):
     """
@@ -62,7 +62,7 @@ class REGRESSION_FUNC_PROTOCOL(Protocol):
             \n
             n:
                 Number of terms
-        
+            
         Returns:
         --------
             Computed term of x
@@ -108,5 +108,5 @@ class Q_COEFS(NamedTuple):
                 Array of coefficients for right edge
     """
 
-    c_left: npt.NDArray[np.float32]
-    c_right: npt.NDArray[np.float32]
+    c_left: np.ndarray[np.float32]
+    c_right: np.ndarray[np.float32]
