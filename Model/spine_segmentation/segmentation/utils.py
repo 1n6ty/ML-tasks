@@ -145,7 +145,7 @@ def open_png_prjs(file_path_side: str, file_path_frontal: str, w_part: Literal["
         Opens png-files of projections to numpy binary array of float32\n
         Provided `spine - red region` and `hip - blue region` modes
 
-        Parameters:
+        Parameters
         -----------
             file_path_side:
                 Path to png file with side projection
@@ -175,7 +175,7 @@ def open_dcm_prjs(file_path_side: str, file_path_frontal: str, new_image_size: t
     """
         Opens dicom-files of projections to numpy grayscale `[from 0 to 1]` array of float32\n
 
-        Parameters:
+        Parameters
         -----------
             file_path_side:
                 Path to dicom file with side projection

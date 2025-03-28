@@ -137,6 +137,7 @@ class CrossValidation_train_generator:
         self.val_size: int = val_size
         self.l_d: int = min(len(self.data["side"]), len(self.data["frontal"]))
 
+        self.update_count = 0
         x, y = self._get_data()
 
         self.data_gen = Data_train_generator(x[0], y[0], self.batch_size, self.mode, self.w_part, self.deep_supervision, self._update_gen, self.new_image_size)
