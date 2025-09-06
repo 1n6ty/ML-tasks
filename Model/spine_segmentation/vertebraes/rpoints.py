@@ -298,127 +298,121 @@ def formating_prj_vertebraes_points(borders: np.ndarray[np.int32], points: np.nd
     
     return np.array(new_points, dtype=np.float32)
 
-
-
-def append_vertebrae_points_after(points: VERTEBRAES_R_POINTS_PRJ, borders: np.ndarray[np.int32], vertebrae_i: int, y_m: np.ndarray[np.float32], initial_gap_in_pixels: int) -> VERTEBRAES_R_POINTS_PRJ:
+def append_vertebrae(borders: np.ndarray[np.int32], points: VERTEBRAES_R_POINTS_PRJ, vertebrae_index: int, y_m: np.ndarray[np.float32], start_x: int, stop_x: int, r: float) -> VERTEBRAES_R_POINTS_PRJ:
     """
-        Appends vertebrae points after vertebrae[vertebrae_i]
+        Appends vertebrae starting from start_x
 
-        Parameters:
+        Parameters
         ----------
-            points:
-                Array of points for each vertebrae projection
-            \n
-            borders:
+            borders
                 Bounding rectangle of the spine - `[up-left, down-right]` coords
             \n
-            vertebrae_i:
-                Index of vertebrae before new one
+            points
+                Array of points for each vertebrae projection
             \n
-            y_m: 
+            vertebrae_index
+                Where to insert
+            \n
+            y_m
                 Spine approximation central contour 
             \n
-            initial_gap_in_pixels:
-                Initial gap size in pixels
+            start_x
+                Starting position (where top intersects with y_m)
+            \n
+            stop_x
+                Intersects bottom with y_m
+            \n
+            r
+                Radius of the caps (top and bottom)
     """
-    new_vertebrae = []
+    y_m = np.append(y_m, [y_m[-1]])
+    new_points = np.concatenate([points[:vertebrae_index], np.zeros((1, 4, 2), dtype=np.float32), points[vertebrae_index:]], axis=0)
 
-    p_mean_down_plate = (points[vertebrae_i][0] + points[vertebrae_i][3]) / 2
-    p_mean_up_plate = (points[vertebrae_i][1] + points[vertebrae_i][2]) / 2
-    p_mean_up_plate_next = (points[vertebrae_i + 1][1] + points[vertebrae_i + 1][2]) / 2
+    d = y_m[start_x + 1] - y_m[start_x]; d = d if d != 0 else gamma
+    normal = -1 / d
+    norm_v = np.array([1, normal] if normal > 0 else [-1, normal * -1], dtype=np.float32) * r / np.abs(normal)
 
-    down_plate_half = np.sqrt(np.sum((points[vertebrae_i][0] - points[vertebrae_i][3]) ** 2)) / 2
+    new_points[vertebrae_index][1] = np.array([start_x + borders[0, 0], y_m[start_x]], dtype=np.float32) + norm_v
+    new_points[vertebrae_index][2] = np.array([start_x + borders[0, 0], y_m[start_x]], dtype=np.float32) - norm_v
 
-    i_height = np.sqrt(np.sum((p_mean_up_plate - p_mean_down_plate) ** 2))
+    d = y_m[stop_x + 1] - y_m[stop_x]; d = d if d != 0 else gamma
+    normal = -1 / d
+    norm_v = np.array([1, normal] if normal > 0 else [-1, normal * -1], dtype=np.float32) * r / np.abs(normal)
 
-    mean_gap_height = initial_gap_in_pixels if vertebrae_i == 0 else i_height / gap_heights_coef[vertebrae_i]
+    new_points[vertebrae_index][0] = np.array([stop_x + borders[0, 0], y_m[stop_x]], dtype=np.float32) + norm_v
+    new_points[vertebrae_index][3] = np.array([stop_x + borders[0, 0], y_m[stop_x]], dtype=np.float32) - norm_v
 
-    new_points = np.copy(points)
+    return new_points
 
-    for x in range(int(p_mean_down_plate[0]), int(p_mean_up_plate_next[0])):
-        if np.sqrt(np.sum((p_mean_down_plate - np.array([x, y_m[x - borders[0, 0]]])) ** 2)) > mean_gap_height:
-            d = y_m[x - borders[0, 0] + 1] - y_m[x - borders[0, 0]]; d = d if d != 0 else gamma
-            normal = -1 / d
-
-            p_mean_up_plate = np.array([x, y_m[x - borders[0, 0]]], dtype=np.float32)
-            delta = np.array([1.0, normal]) * down_plate_half * up_plates_coef[vertebrae_i] / np.sqrt(1 + normal ** 2)
-            if normal < 0:
-                new_vertebrae = [
-                    p_mean_up_plate + delta,
-                    p_mean_up_plate - delta
-                ]
-            else:
-                new_vertebrae = [
-                    p_mean_up_plate - delta,
-                    p_mean_up_plate + delta
-                ]
-            
-            break
-    
-    for x in range(int(p_mean_up_plate[0]), int(p_mean_up_plate_next[0])):
-        if np.sqrt(np.sum((p_mean_up_plate - np.array([x, y_m[x - borders[0, 0]]])) ** 2)) > i_height * height_coef[vertebrae_i]:
-            d = y_m[x - borders[0, 0] + 1] - y_m[x - borders[0, 0]]; d = d if d != 0 else gamma
-            normal = -1 / d
-
-            p_mean_down_plate = np.array([x, y_m[x - borders[0, 0]]], dtype=np.float32)
-            delta = np.array([1.0, normal]) * down_plate_half * down_plates_coef[vertebrae_i] / np.sqrt(1 + normal ** 2)
-            if normal < 0:
-                new_vertebrae = [
-                    p_mean_down_plate + delta,
-                    *new_vertebrae,
-                    p_mean_down_plate - delta
-                ]
-            else:
-                new_vertebrae = [
-                    p_mean_down_plate - delta,
-                    *new_vertebrae,
-                    p_mean_down_plate + delta
-                ]
-            
-            break
-    
-    return np.concatenate([new_points[:vertebrae_i + 1], np.expand_dims(new_vertebrae, axis=0), new_points[vertebrae_i + 1: ]], axis=0)
-
-def fullfill_vertebraes(borders: np.ndarray[np.int32], points: VERTEBRAES_R_POINTS_PRJ, y_m: np.ndarray[np.float32], initial_gap_in_pixels: int) -> VERTEBRAES_R_POINTS_PRJ:
+def fullfill_vertebraes(borders: np.ndarray[np.int32], points: VERTEBRAES_R_POINTS_PRJ, y_m: np.ndarray[np.float32]) -> VERTEBRAES_R_POINTS_PRJ:
     """
         Fullfill large gaps with vertebraes
 
-        Parameters:
+        Parameters
         -----------
-            borders:
+            borders
                 Bounding rectangle of the spine - `[up-left, down-right]` coords
             \n
-            points:
+            points
                 Array of points for each vertebrae projection
             \n
-            y_m: 
-                Spine approximation central contour 
-            \n
-            initial_gap_in_pixels:
-                Initial gap size in pixels
+            y_m
+                Spine approximation central contour
     """
     new_points = np.copy(points)
 
-    vertebrae_i = 0
-    while vertebrae_i < new_points.shape[0] - 1 and new_points.shape[0] < 24:
+    L = np.min([np.linalg.norm((points[i + 1][1] + points[i + 1][2]) - (points[i][0] + points[i][3])) for i in range(points.shape[0] - 1)]) / 2
+    for vertebrae_i in range(23):
+        if vertebrae_i + 1 >= new_points.shape[0]:
+            break
         p_mean_down_plate = (new_points[vertebrae_i][0] + new_points[vertebrae_i][3]) / 2
         p_mean_up_plate = (new_points[vertebrae_i][1] + new_points[vertebrae_i][2]) / 2
         p_mean_up_plate_next = (new_points[vertebrae_i + 1][1] + new_points[vertebrae_i + 1][2]) / 2
+        p_mean_down_plate_next = (new_points[vertebrae_i + 1][0] + new_points[vertebrae_i + 1][3]) / 2
 
-        i_height = np.sqrt(np.sum((p_mean_up_plate - p_mean_down_plate) ** 2))
-        i_gap = np.sqrt(np.sum((p_mean_down_plate - p_mean_up_plate_next) ** 2))
+        i_height = np.linalg.norm(p_mean_up_plate - p_mean_down_plate)
+        i1_height = np.linalg.norm(p_mean_down_plate_next - p_mean_up_plate_next)
+        i_gap = np.linalg.norm(p_mean_down_plate - p_mean_up_plate_next)
 
-        mean_gap_height = initial_gap_in_pixels if vertebrae_i == 0 else i_height / gap_heights_coef[vertebrae_i]
+        r_b = np.linalg.norm(new_points[vertebrae_i][0] - new_points[vertebrae_i][3]) / 2
+        r_t = np.linalg.norm(new_points[vertebrae_i + 1][1] - new_points[vertebrae_i + 1][2]) / 2
+        
+        n = min(int((i_gap - L) / ((i_height + i1_height) / 2 + L)), 24 - new_points.shape[0])
+        if n <= 0: continue
 
-        if mean_gap_height + i_height * height_coef[vertebrae_i] < i_gap:
-            new_points = append_vertebrae_points_after(new_points, borders, vertebrae_i, y_m, initial_gap_in_pixels)
-        vertebrae_i += 1
+        l_pass = l_new = (i_gap - n * i_height - (i1_height - i_height) * n * (n + 1) / 2 / (n + 1)) / (n + 1)
+        x_start, x_stop = -1, int(p_mean_down_plate[0] - borders[0, 0])
+        i = 1
+        for x in range((p_mean_down_plate[0] - borders[0, 0]).astype(np.int32), (p_mean_up_plate_next[0] - borders[0, 0]).astype(np.int32)):
+            if x_start == -1:
+                if np.linalg.norm(
+                    np.array([x, y_m[x]], dtype=np.float32) - np.array([x_stop, y_m[x_stop]], dtype=np.float32)
+                ) >= l_pass:
+                    x_start = x
+                    l_pass = i_height + (i1_height - i_height) * i / (n + 1)
+            else:
+                if np.linalg.norm(
+                    np.array([x, y_m[x]], dtype=np.float32) - np.array([x_start, y_m[x_start]], dtype=np.float32)
+                ) >= l_pass:
+                    new_points = append_vertebrae(
+                        borders,
+                        new_points, 
+                        vertebrae_i + i, 
+                        y_m, 
+                        x_start, 
+                        x,
+                        r_b + (r_t - r_b) * i / (n + 1)
+                    )
+                    i += 1
+                    x_start, x_stop = -1, x
+                    l_pass = l_new
+        L = l_new
 
     return new_points
 
 def link_projections(points_side: VERTEBRAES_R_POINTS_PRJ, points_frontal: VERTEBRAES_R_POINTS_PRJ, borders_frontal: np.ndarray[np.int32], y_m_frontal: np.ndarray[np.float32]) -> VERTEBRAES_R_POINTS:
     """
-        Links to projections (side and frontal) together and formats all to 3D space related to Gladcov's work\n
+        Links two projections (side and frontal) together returns new frontal\n
         (Supposing that side projection is full and frontal projection has at least one vertebrae)
 
         Parameters:
@@ -640,23 +634,4 @@ def link_projections(points_side: VERTEBRAES_R_POINTS_PRJ, points_frontal: VERTE
                 continue
         link_point_i += 1
     
-    # Formating ----------------------
-    # TODO update formating for 2d-3d without ellipses
-    new_vertebraes = []
-    for i in range(len(linked_frontal_points)):
-        new_vertebraes.append(
-            [
-                # Top ellipse
-                (np.array([-points_side[i][1][1], -linked_frontal_points[i][1][1], (-points_side[i][1][0] - linked_frontal_points[i][1][0]) / 2]) + np.array([-points_side[i][1][1], -linked_frontal_points[i][2][1], (-points_side[i][1][0] - linked_frontal_points[i][2][0]) / 2])) / 2,
-                (np.array([-points_side[i][2][1], -linked_frontal_points[i][1][1], (-points_side[i][2][0] - linked_frontal_points[i][1][0]) / 2]) + np.array([-points_side[i][1][1], -linked_frontal_points[i][1][1], (-points_side[i][1][0] - linked_frontal_points[i][1][0]) / 2])) / 2,
-                (np.array([-points_side[i][2][1], -linked_frontal_points[i][2][1], (-points_side[i][2][0] - linked_frontal_points[i][2][0]) / 2]) + np.array([-points_side[i][2][1], -linked_frontal_points[i][1][1], (-points_side[i][2][0] - linked_frontal_points[i][1][0]) / 2])) / 2,
-                (np.array([-points_side[i][1][1], -linked_frontal_points[i][2][1], (-points_side[i][1][0] - linked_frontal_points[i][2][0]) / 2]) + np.array([-points_side[i][2][1], -linked_frontal_points[i][2][1], (-points_side[i][2][0] - linked_frontal_points[i][2][0]) / 2])) / 2,
-                # Bottom ellipse
-                (np.array([-points_side[i][0][1], -linked_frontal_points[i][0][1], (-points_side[i][0][0] - linked_frontal_points[i][0][0]) / 2]) + np.array([-points_side[i][0][1], -linked_frontal_points[i][3][1], (-points_side[i][0][0] - linked_frontal_points[i][3][0]) / 2])) / 2,
-                (np.array([-points_side[i][3][1], -linked_frontal_points[i][0][1], (-points_side[i][3][0] - linked_frontal_points[i][0][0]) / 2]) + np.array([-points_side[i][0][1], -linked_frontal_points[i][0][1], (-points_side[i][0][0] - linked_frontal_points[i][0][0]) / 2])) / 2,
-                (np.array([-points_side[i][3][1], -linked_frontal_points[i][3][1], (-points_side[i][3][0] - linked_frontal_points[i][3][0]) / 2]) + np.array([-points_side[i][3][1], -linked_frontal_points[i][0][1], (-points_side[i][3][0] - linked_frontal_points[i][0][0]) / 2])) / 2,
-                (np.array([-points_side[i][0][1], -linked_frontal_points[i][3][1], (-points_side[i][0][0] - linked_frontal_points[i][3][0]) / 2]) + np.array([-points_side[i][3][1], -linked_frontal_points[i][3][1], (-points_side[i][3][0] - linked_frontal_points[i][3][0]) / 2])) / 2,
-            ]
-        )
-
-    return np.array(new_vertebraes, dtype=np.float32) - np.array([-points_side[-1][2][1], -linked_frontal_points[-1][1][1], (-points_side[-1][2][0] - linked_frontal_points[-1][1][0]) / 2])
+    return np.array(linked_frontal_points, dtype=np.float32)

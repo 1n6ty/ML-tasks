@@ -18,13 +18,13 @@ pixel_array_real_side, pixel_array_real_frontal = correct_heights(
         '../Data/spine-segmentation/side.png', 
         '../Data/spine-segmentation/frontal.png', 
         w_part="spine", 
-        new_image_size=(1760, 768)
+        new_image_size=(2304, 960)
     ),
     *open_png_prjs(
         '../Data/spine-segmentation/side.png', 
         '../Data/spine-segmentation/frontal.png', 
         w_part="hip", 
-        new_image_size=(1760, 768)
+        new_image_size=(2304, 960)
     )
 )
 pixel_spacing = [0.18 / 0.3, 0.18 / 0.3]
@@ -96,34 +96,35 @@ start = time()
 
 points_side = compute_vertebraes_points(pixel_array_real_side, vertebraes_div_lines_side)
 points_side = formating_prj_vertebraes_points(borders_side, points_side, y_side[0])
-points_side = fullfill_vertebraes(borders_side, points_side, y_side[0], int(7 / pixel_spacing[0]))
+points_side = fullfill_vertebraes(borders_side, points_side, y_side[0])
 
 points_frontal = compute_vertebraes_points(pixel_array_real_frontal, vertebraes_div_lines_frontal)
 points_frontal = formating_prj_vertebraes_points(borders_frontal, points_frontal, y_frontal[0])
+points_frontal = fullfill_vertebraes(borders_frontal, points_frontal, y_frontal[0])
 
-reference_points = link_projections(points_side, points_frontal, borders_frontal, y_frontal[0])
+points_frontal = link_projections(points_side, points_frontal, borders_frontal, y_frontal[0])
 
 end = time()
 print("points computed", end - start, "seconds")
 
-start = time()
+# start = time()
 
-med_class = Medical_Parameters(reference_points)
+# med_class = Medical_Parameters(reference_points)
 
-print(med_class._params["vertebrae"])
+# print(med_class._params["vertebrae"])
 
-end = time()
-print("medical parameters computed", end - start, "seconds")
+# end = time()
+# print("medical parameters computed", end - start, "seconds")
 
-import json
-with open("../Results/sngl_params.json", "w") as f:
-    json.dump(med_class._single_params, f)
+# import json
+# with open("../Results/sngl_params.json", "w") as f:
+#     json.dump(med_class._single_params, f)
 
-writer = pd.ExcelWriter("../Results/params.xlsx", engine="xlsxwriter")
-med_class._params["vertebrae"].to_excel(writer, sheet_name="Тела позвонков")
-med_class._params["gap"].to_excel(writer, sheet_name="Межпозвоночные диски")
-med_class._params["segment"].to_excel(writer, sheet_name="Отделы")
-writer.close()
+# writer = pd.ExcelWriter("../Results/params.xlsx", engine="xlsxwriter")
+# med_class._params["vertebrae"].to_excel(writer, sheet_name="Тела позвонков")
+# med_class._params["gap"].to_excel(writer, sheet_name="Межпозвоночные диски")
+# med_class._params["segment"].to_excel(writer, sheet_name="Отделы")
+# writer.close()
 
 for vertebrae in points_side:
     cv2.polylines(pixel_array_real_side, [vertebrae[:, ::-1].astype(np.int32)], True, 2, 2)

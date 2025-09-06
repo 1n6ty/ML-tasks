@@ -26,7 +26,7 @@ with open(sys.argv[1], 'rb') as f:
 
 RESULTS_DIR: str = conf["basic"]["RESULTS_DIR"]
 with open(conf["basic"]["ROUTES_FILE"], 'rb') as f:
-    FILE_DIRS: dict[Literal["dicom", "converted"], dict[Literal["side", "frontal"], str]] = json.load(f)
+    FILE_DIRS: dict[Literal["dicom", "filled"], dict[Literal["side", "frontal"], str]] = json.load(f)
 
 IMG_SHAPE: list[int] = conf["settings"]["IMG_SHAPE"]
 VALIDATION_NUM: int = conf["settings"]["VALIDATION_NUM"]
@@ -44,7 +44,7 @@ CONV_ACTIVATION_FUNC: str = conf["model"]['CONV_ACTIVATION_FUNC']
 CONV_KERNEL_SIZE: int = conf["model"]['CONV_KERNEL_SIZE']
 DROPOUT_RATE: float = conf["model"]['DROPOUT_RATE']
 
-cross_validation_generator = CrossValidation_train_generator(FILE_DIRS["dicom"], FILE_DIRS["converted"], BATCH_SIZE, VALIDATION_NUM, MODE, WPART, DEEP_SUPERVISION, IMG_SHAPE)
+cross_validation_generator = CrossValidation_train_generator(FILE_DIRS["dicom"], FILE_DIRS["filled"], BATCH_SIZE, VALIDATION_NUM, MODE, WPART, DEEP_SUPERVISION, IMG_SHAPE)
 
 # Training
 def make_loss(smooth=1e-6):
@@ -95,12 +95,6 @@ class HistoryWriter(Callback):
             pickle.dump(self.history, f)
 
 historyWriter = HistoryWriter(os.path.join(RESULTS_DIR, f"model_history_{MODE}_{WPART}"))
-
-import seaborn as sns
-import matplotlib.pyplot as plt
-
-print(cross_validation_generator.data_gen[0])
-sns.heatmap(cross_validation_generator.data_gen[0])
 
 model_unet = make_unet2p((*IMG_SHAPE, 1), filters=FILTERS, conv_activation_func=CONV_ACTIVATION_FUNC, dropout_rate=DROPOUT_RATE, conv_kernel_size=CONV_KERNEL_SIZE, deep_supervision=DEEP_SUPERVISION)
 model_unet.compile(optimizer="adam", loss=[loss_func, loss_func, loss_func, loss_func], loss_weights=[1.0, 1.0, 1.0, 1.0], metrics=[Dice(), Dice(), Dice(), Dice()])

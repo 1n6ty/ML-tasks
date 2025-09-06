@@ -4,7 +4,7 @@
 from tensorflow.keras.utils import Sequence
 import numpy as np
 
-from spine_segmentation.segmentation.utils import open_dcm_prjs, open_png_prjs
+from spine_segmentation.segmentation.utils import open_dcm_prj, open_png_prj, open_dcm_prjs, open_png_prjs
 
 from typing import Callable, Literal
 
@@ -71,15 +71,15 @@ class Data_train_generator(Sequence):
         batch_x, batch_y = [], []
         for i in range(index * self.batch_size, (index + 1) * self.batch_size):
             if i < self.l_d:
-                x = open_dcm_prjs(self.data["side"][i], self.data["frontal"][i], self.new_image_size)
-                y = open_png_prjs(self.labels["side"][i], self.labels["frontal"][i], self.w_part, self.new_image_size)
                 if self.mode == "both":
-                    batch_x.append(x)
-                    batch_y.append(y)
+                    x = open_dcm_prjs(self.data["side"][i], self.data["frontal"][i], self.new_image_size)
+                    y = open_png_prjs(self.labels["side"][i], self.labels["frontal"][i], self.w_part, self.new_image_size)
                 else:
-                    mode_ind = 0 if self.mode == "side" else 1
-                    batch_x.append(x[mode_ind])
-                    batch_y.append(y[mode_ind])
+                    x = open_dcm_prj(self.data["side"][i] if self.mode == "side" else self.data["frontal"][i], self.new_image_size)
+                    y = open_png_prj(self.labels["side"][i] if self.mode == "side" else self.labels["frontal"][i], self.w_part, self.new_image_size)
+
+                batch_x.append(x)
+                batch_y.append(y)
         
         batch_x = np.array(batch_x, dtype=np.float32)
         batch_y = np.array(batch_y, dtype=np.float32)
@@ -176,19 +176,18 @@ class CrossValidation_train_generator:
         """
             Actual shuffling
         """
-        if self.update_count < 2:
-            self.update_count += 1
+        sh_indexes = np.arange(start=0, stop=self.l_d, step=1, dtype=np.int32)
+        np.random.shuffle(sh_indexes)
+        
+        if self.mode != "both":
+            self.data[self.mode] = [self.data[self.mode][i] for i in sh_indexes]
+            self.labels[self.mode] = [self.labels[self.mode][i] for i in sh_indexes]
         else:
-            self.update_count = 0
-
-            sh_indexes = np.random.shuffle(
-                np.arange(start=0, stop=self.l_d, step=1, dtype=np.int32)
-            )
             for s in ["side", "frontal"]:
                 self.data[s] = [self.data[s][i] for i in sh_indexes]
                 self.labels[s] = [self.labels[s][i] for i in sh_indexes]
-            
-            x, y = self._get_data()
+        
+        x, y = self._get_data()
 
-            self.data_gen = Data_train_generator(x[0], y[0], self.batch_size, self.mode, self.w_part, self.deep_supervision, self._update_gen, self.new_image_size)
-            self.val_gen = Data_train_generator(x[1], y[1], self.batch_size, self.mode, self.w_part, self.deep_supervision, self._update_gen, self.new_image_size)
+        self.data_gen = Data_train_generator(x[0], y[0], self.batch_size, self.mode, self.w_part, self.deep_supervision, self._update_gen, self.new_image_size)
+        self.val_gen = Data_train_generator(x[1], y[1], self.batch_size, self.mode, self.w_part, self.deep_supervision, self._update_gen, self.new_image_size)
