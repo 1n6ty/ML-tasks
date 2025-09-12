@@ -9,7 +9,7 @@ from ultralytics import YOLO
 from segmentation.spine import Spine
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "Data/spine-segmentation/"
-test_file_path: Path = DATA_DIR / "t_side.png"
+test_file_path: Path = DATA_DIR / "dicom/002_SD.dcm"
 print(test_file_path)
 if test_file_path.suffix == ".dcm":
     pixel_array: np.ndarray = pydicom.dcmread(test_file_path).pixel_array

@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 
-from segmentation.interpolation.path import vPath
+from segmentation.interpolation.path import lPath
 
 from typing import Literal
 
@@ -66,13 +66,13 @@ class Vertebrae:
         self.upper_plate_normal: np.ndarray[np.int32] | None = None
         self.bottom_plate_normal: np.ndarray[np.int32] | None = None
 
-        self.vpath: vPath | None = None
-        self.prev_gap_vpath: vPath | None = None
-        self.next_gap_vpath: vPath | None = None
+        self.vpath: lPath | None = None
+        self.prev_gap_vpath: lPath | None = None
+        self.next_gap_vpath: lPath | None = None
 
         self.height: np.float32 | None = None
 
-    def set_vpath(self, prev_vertebrae: 'Vertebrae' = None, next_vertebrae: 'Vertebrae' = None) -> None:
+    def set_vpath(self, prev_vertebrae: 'Vertebrae' = None, next_vertebrae: 'Vertebrae' = None, n: np.int32 = 4) -> None:
         """Setter for vpath variables.
 
             Sets vpath variable with skeleton class (parametrized middle curve of vertebrae).
@@ -85,32 +85,28 @@ class Vertebrae:
                     Previous vertebrae object. If `None` then no gap_vpath will be set
                 next_vertebrae (Vertebrae)
                     Next vertebrae object. If `None` then no gap_vpath will be set
+                n (np.int32)
+                    dims of path
         """
         total_t: np.float32 = 0
         if not (prev_vertebrae is None):
-            self.prev_gap_vpath = vPath(
+            self.prev_gap_vpath = lPath(
                 prev_vertebrae.upper_plate_middle_point,
                 self.bottom_plate_middle_point,
-                prev_vertebrae.upper_plate_normal,
-                self.bottom_plate_normal,
                 prev_vertebrae.vpath.start_t + prev_vertebrae.height
             )
             total_t += prev_vertebrae.vpath.start_t + prev_vertebrae.height + self.prev_gap_vpath.length
-        self.vpath = vPath(
+        self.vpath = lPath(
             self.bottom_plate_middle_point,
             self.upper_plate_middle_point,
-            self.bottom_plate_normal,
-            self.upper_plate_normal,
             total_t
         )
         self.height = self.vpath.length
         total_t += self.height
         if not (next_vertebrae is None):
-            self.prev_gap_vpath = vPath(
+            self.next_gap_vpath = lPath(
                 self.upper_plate_middle_point,
                 next_vertebrae.bottom_plate_middle_point,
-                self.upper_plate_normal,
-                next_vertebrae.bottom_plate_normal,
                 total_t
             )
 
@@ -151,7 +147,7 @@ class Vertebrae:
         
         down_avg: np.ndarray[np.float32] = np.average(down, axis=0)
         main_vec: np.ndarray[np.float32] = np.average(up, axis=0) - down_avg
-        self.reference_points = self.reference_points[np.argsort([Vertebrae._get_signed_angle(main_vec, self.reference_points[j] - down_avg) for j in range(self.reference_points.shape[0])])]
+        self.reference_points = self.reference_points[np.argsort([Vertebrae._get_signed_angle(main_vec, self.reference_points[j] - down_avg) for j in range(self.reference_points.shape[0])])[::-1]]
 
         self.upper_plate_normal = self.reference_points[2] - self.reference_points[1]
         self.bottom_plate_normal = self.reference_points[3] - self.reference_points[0]

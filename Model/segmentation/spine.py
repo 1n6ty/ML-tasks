@@ -6,8 +6,8 @@ from ultralytics import YOLO
 from ultralytics.engine.results import Results
 
 from segmentation.elements.vertebrae import Vertebrae
-from segmentation.interpolation.path import vPath
-from segmentation.heal import Heal
+from segmentation.interpolation.path import lPath
+import segmentation.heal
 
 class Spine:
     """Class for spine building and computing parameters.
@@ -47,94 +47,46 @@ class Spine:
         
         self._order_vertebraes()
         self._order_vertebraes_reference_points()
-        self._set_vpaths()
+        self._set_lpaths()
 
-        self.vertebraes = Heal.divide_sticked(self.vertebraes, 1000)
+        prev_v_r = np.array([v.reference_points for v in self.vertebraes])
 
-        l = np.array([i.vpath.start_t for i in self.vertebraes][1: -1])
-        after_l = l[1:]
+        self.vertebraes.pop(-4)
+        self.vertebraes.pop(-4)
+        self.vertebraes.pop(-4)
 
-        h = np.array([i.vpath.length for i in self.vertebraes][1: -1])
+        self.vertebraes = segmentation.heal.heal(self.vertebraes)
+        
+        err = np.abs(prev_v_r - np.array([v.reference_points for v in self.vertebraes]))
+        err = np.concatenate(err, axis=0)
+        print(np.sort(np.linalg.norm(err, axis=1)))
+        # spine_conv: np.ndarray = np.zeros_like(side_pixel_array, dtype=np.uint8)
 
-        m = np.median(np.divide(h[:-1], h[1:]))
-        print("median ", m)
+        # for v in self.vertebraes:
+        #     cv2.fillConvexPoly(spine_conv, v.mask_xy, 255, 1)
+        #     cv2.polylines(spine_conv, [v.reference_points], True, 200, 3)
+        #     # for t in np.linspace(0, 1, 200):
+        #     #     if not (v.next_gap_vpath is None):
+        #     #         p = v.next_gap_vpath.f(t).astype(np.int32)
+        #     #         spine_conv[p[1], p[0]] = 150
+        #     #     if not (v.prev_gap_vpath is None):
+        #     #         p = v.prev_gap_vpath.f(t).astype(np.int32)
+        #     #         spine_conv[p[1], p[0]] = 150
+        #     #     p = v.vpath.f(t).astype(np.int32)
+        #     #     spine_conv[p[1], p[0]] = 150
+        # # for n in np.linspace(t_spl[0], t_spl[-1], 6000):
+        # #     spine_conv[int(cs_y(n)), int(cs_x(n))] = 150
+        # import seaborn as sns
+        # import matplotlib.pyplot as plt
+        # sns.heatmap(spine_conv)
+        # plt.show()
 
-        import seaborn as sns
-        import matplotlib.pyplot as plt
-
-        import scipy.optimize
-        def erp(t, ro):
-            err = (np.array([t[0] + t[1] * i for i in l[:-1]]) - after_l) ** 2
-            err = np.sort(err)
-            err = np.where(err >= err[int(err.shape[0] * ro)], (1 - ro) * err, ro * err)
-            return np.sum(err)
-        t = scipy.optimize.minimize(
-            erp,
-            [1, 1],
-            method="L-BFGS-B",
-            tol=1e-9,
-            args=(0.12, )
-        ).x
-        n = [t[0] + t[1] * i for i in l[:-1]]
-
-        print(t)
-        print(np.median(np.abs(n - after_l)), np.max(np.abs(n - after_l)), np.min(np.abs(n - after_l)))
-
-        l_new = np.array([i.vpath.start_t + i.height for i in self.vertebraes][1: -1])
-        l_after_new = l_new[1:]
-
-        def er(t, ro):
-            err = (np.array([t[0] + t[1] * i for i in l_new[:-1]]) - l_after_new) ** 2
-            err = np.sort(err)
-            err = np.where(err >= err[int(err.shape[0] * ro)], (1 - ro) * err, ro * err)
-            return np.sum(err)
-        t_h = scipy.optimize.minimize(
-            er,
-            [1, 1],
-            method="L-BFGS-B",
-            tol=1e-9,
-            args=(0.12, )
-        ).x
-        n_h = [t_h[0] + t_h[1] * i for i in l_new[:-1]]
-
-        print(t_h)
-        print(np.median(np.abs(n_h - l_after_new)), np.max(np.abs(n_h - l_after_new)), np.min(np.abs(n_h - l_after_new)))
-
-        print(l, l_new)
-        print("--------------------")
-        print(n, n_h)
-
-        f, ax = plt.subplots(nrows=1, ncols=2)
-
-        sns.lineplot(y=after_l, x=l[:-1], ax=ax[0])
-        sns.lineplot(y=n, x=l[:-1], ax=ax[0])
-
-        sns.lineplot(y=l_after_new, x=l_new[:-1], ax=ax[1])
-        sns.lineplot(y=n_h, x=l_new[:-1], ax=ax[1])
-
-        plt.show()
-
-        spine_conv: np.ndarray = np.zeros_like(side_pixel_array, dtype=np.uint8)
-
-        for v in self.vertebraes:
-            cv2.fillConvexPoly(spine_conv, v.mask_xy, 255, 1)
-            cv2.polylines(spine_conv, [v.reference_points], True, 200, 3)
-            for n in np.linspace(0, 1, 2000):
-                spine_conv[*v.vpath.f(n)[::-1].astype(np.int32)] = 150
-                if not (v.next_gap_vpath is None):
-                    spine_conv[*v.next_gap_vpath.f(n)[::-1].astype(np.int32)] = 150
-                if not (v.prev_gap_vpath is None):
-                    spine_conv[*v.prev_gap_vpath.f(n)[::-1].astype(np.int32)] = 150
-
-        sns.heatmap(spine_conv)
-        plt.show()
-
-    def _set_vpaths(self) -> None:
-        """Sets vpath for vertebraes and gaps between them.
+    def _set_lpaths(self) -> None:
+        """Sets lpath for vertebraes and gaps between them.
         """
         vertebraes_extended: list[Vertebrae] = [None, *self.vertebraes, None]
         for vi in range(1, len(vertebraes_extended) - 1):
-            vertebraes_extended[vi].set_vpath(vertebraes_extended[vi - 1], vertebraes_extended[vi + 1])
+            vertebraes_extended[vi].set_vpath(vertebraes_extended[vi - 1], vertebraes_extended[vi + 1], 4)
 
     def _order_vertebraes_reference_points(self) -> None:
         """Orders reference points of vertebraes.
