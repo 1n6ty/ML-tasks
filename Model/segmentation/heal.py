@@ -10,71 +10,144 @@ import scipy.optimize, scipy.interpolate, scipy.integrate, scipy.stats
 
 import segmentation.utils
 
+def compute_ref_err(vertebraes, cs_x, cs_y, dcs_x, dcs_y, bcoefs = None, ucoefs = None, t = None):
+    s = []
+    for vind in range(1, len(vertebraes) - 2):
+        if not (bcoefs is None):
+            next_bottom_t = bcoefs[0] + bcoefs[1] * t[0][vind * 2]
+            part = (next_bottom_t - vertebraes[vind].vpath.start_t - vertebraes[vind].height) / (vertebraes[vind + 1].vpath.start_t - vertebraes[vind].vpath.start_t - vertebraes[vind].height)
+            bottom_plate_length = (1 - part) * np.linalg.norm(vertebraes[vind].upper_plate_normal) + part * np.linalg.norm(vertebraes[vind + 1].bottom_plate_normal)
+            bottom_middle_point = np.array([cs_x(next_bottom_t), cs_y(next_bottom_t)], dtype=np.float32)
+            bottom_normal = np.array([dcs_y(next_bottom_t), -dcs_x(next_bottom_t)], dtype=np.float32)
+            bottom_normal /= np.linalg.norm(bottom_normal)
+
+            s = np.append(s, (
+                    vertebraes[vind + 1].reference_points[[0, 3]] - np.array([bottom_middle_point + bottom_normal * bottom_plate_length / 2, bottom_middle_point - bottom_normal * bottom_plate_length / 2], dtype=np.float32)
+                ) ** 2)
+        
+        if not (ucoefs is None):
+            next_upper_t = ucoefs[0] + ucoefs[1] * t[0][vind * 2 + 1]
+            part = (next_upper_t - vertebraes[vind].vpath.start_t - vertebraes[vind].height) / (vertebraes[vind + 1].vpath.start_t - vertebraes[vind].vpath.start_t - vertebraes[vind].height)
+            upper_plate_length = (1 - part) * np.linalg.norm(vertebraes[vind].upper_plate_normal) + part * np.linalg.norm(vertebraes[vind + 1].bottom_plate_normal)
+            upper_middle_point = np.array([cs_x(next_upper_t), cs_y(next_upper_t)], dtype=np.float32)
+            upper_normal = np.array([dcs_y(next_upper_t), -dcs_x(next_upper_t)], dtype=np.float32)
+            upper_normal /= np.linalg.norm(upper_normal)
+
+            s = np.append(s, (
+                    vertebraes[vind + 1].reference_points[[1, 2]] - np.array([upper_middle_point + upper_normal * upper_plate_length / 2, upper_middle_point - upper_normal * upper_plate_length / 2], dtype=np.float32)
+                ) ** 2
+            )
+    return np.median(s)
+
 def heal(vertebraes: list[Vertebrae]) -> list[Vertebrae]:
     f, ax = plt.subplots(nrows=1, ncols=2)
-    txy = np.concatenate(
+    
+    xy = np.concatenate(
         [
             [
-                [t for t in np.linspace(v.vpath.start_t, v.vpath.start_t + v.height, 100)], 
-                [t for t in np.linspace(v.bottom_plate_middle_point[0], v.upper_plate_middle_point[0], 100)],
-                [t for t in np.linspace(v.bottom_plate_middle_point[1], v.upper_plate_middle_point[1], 100)],
+                
+                [v.bottom_plate_middle_point[0], v.upper_plate_middle_point[0]],
+                [v.bottom_plate_middle_point[1], v.upper_plate_middle_point[1]],
             ]
             for v in vertebraes
         ],
-        axis=1
+        axis=1,
+        dtype=np.float32
     )
 
-    cs_x = scipy.interpolate.CubicSpline(txy[0], txy[1], bc_type="natural")
-    cs_y = scipy.interpolate.CubicSpline(txy[0], txy[2], bc_type="natural")
+    len_old = 0
+    t = np.concatenate(
+        [
+            [
+                [v.vpath.start_t, v.vpath.start_t + v.height]
+            ]
+            for v in vertebraes
+        ],
+        axis=1,
+        dtype=np.float32
+    )
+    
+    cs_x = scipy.interpolate.CubicSpline(t[0], xy[0], bc_type="natural")
+    cs_y = scipy.interpolate.CubicSpline(t[0], xy[1], bc_type="natural")
+    dcs_x, dcs_y = cs_x.derivative(), cs_y.derivative()
+    
+    for _ in range(50):
+        if np.abs(t[0][-1] - len_old) > 1e-9:
+            break
+        len_old = t[0][-1]
+        t = np.concatenate(
+            [
+                [
+                    [
+                        scipy.integrate.quad(segmentation.utils._path_func, 0, v, args=(dcs_x, dcs_y), limit=100)[0]
+                    ]
+                ]
+                for v in t[0]
+            ],
+            axis=1,
+            dtype=np.float32
+        )
+        cs_x = scipy.interpolate.CubicSpline(t[0], xy[0], bc_type="natural")
+        cs_y = scipy.interpolate.CubicSpline(t[0], xy[1], bc_type="natural")
+        dcs_x, dcs_y = cs_x.derivative(), cs_y.derivative()
+    
 
-    dcs_x = cs_x.derivative()
-    dcs_y = cs_y.derivative()
-
-    l = np.array([scipy.integrate.quad(segmentation.utils._path_func, 0, vertebraes[vind].vpath.start_t, args=(dcs_x, dcs_y))[0] for vind in range(1, len(vertebraes) - 1)])
+    l = np.array([scipy.integrate.quad(segmentation.utils._path_func, 0, vertebraes[vind].vpath.start_t, args=(dcs_x, dcs_y), limit=100)[0] for vind in range(1, len(vertebraes) - 1)])
     # for v in vertebraes[1:-1]:
     #     l.append(l[-1] + v.next_gap_vpath.length + v.height)
     # l = np.array(l)
 
-    bottom_coefs: np.ndarray[np.float32] = scipy.optimize.minimize(
-        segmentation.utils._compute_errq,
-        [0, 0],
-        args=(0.5, l),
-        tol=1e-9,
-        method="BFGS"
-    ).x
+    bottom_coefs: np.ndarray[np.float32] = None
+    err = float("inf")
+    for i in np.linspace(0, 1, 1000):
+        tmp = scipy.optimize.minimize(
+            segmentation.utils._compute_errq,
+            [0, 0],
+            args=(i, l),
+            tol=1e-9,
+            method="BFGS",
+            jac=segmentation.utils._compute_errq_jac
+        ).x
 
+        ue = compute_ref_err(vertebraes, cs_x, cs_y, dcs_x, dcs_y, tmp, None, t)
+        if ue < err:
+            bottom_coefs = tmp
+            err = ue
     n = [bottom_coefs[0] + bottom_coefs[1] * i for i in l[:-1]]
-    be = np.median(np.abs(n - l[1:]))
-
-    #bottom_coefs[0] += be
-
+    #bottom_coefs[0] -= np.max(n - l[1:])
+    print(compute_ref_err(vertebraes, cs_x, cs_y, dcs_x, dcs_y, bottom_coefs, None, t))
     print("Bottom coefs:")
-    print(be)
+    print(err)
     lx = sns.lineplot(y=n, x=l[:-1], ax=ax[0])
     lx = sns.lineplot(y=l[1:], x=l[:-1], ax=ax[0])
     lx.set(title="Bottom")
     
-    l = np.array([scipy.integrate.quad(segmentation.utils._path_func, 0, vertebraes[vind].vpath.start_t + vertebraes[vind].height, args=(dcs_x, dcs_y))[0] for vind in range(len(vertebraes) - 1)])
+    l = np.array([scipy.integrate.quad(segmentation.utils._path_func, 0, vertebraes[vind].vpath.start_t + vertebraes[vind].height, args=(dcs_x, dcs_y), limit=100)[0] for vind in range(1, len(vertebraes) - 1)])
 
     # for v in vertebraes[1:-1]:
     #     l.append(l[-1] + v.prev_gap_vpath.length + v.height)
     # l = np.array(l)
-
-    upper_coefs: np.ndarray[np.float32] = scipy.optimize.minimize(
-        segmentation.utils._compute_errq,
-        [0, 0],
-        args=(0.5, l),
-        tol=1e-9,
-        method="BFGS"
-    ).x
-
+    upper_coefs: np.ndarray[np.float32] = None
+    err = float("inf")
+    for i in np.linspace(0, 1, 1000):
+        tmp = scipy.optimize.minimize(
+            segmentation.utils._compute_errq,
+            [0, 0],
+            args=(i, l),
+            tol=1e-9,
+            method="BFGS",
+            jac=segmentation.utils._compute_errq_jac
+        ).x
+        
+        ue = compute_ref_err(vertebraes, cs_x, cs_y, dcs_x, dcs_y, None, tmp, t)
+        if ue < err:
+            upper_coefs = tmp
+            err = ue
     n = [upper_coefs[0] + upper_coefs[1] * i for i in l[:-1]]
-    ue = np.median(np.abs(n - l[1:]))
-
-    #upper_coefs[0] -= ue
-
+    #upper_coefs[0] -= np.max(n - l[1:])
+    print(compute_ref_err(vertebraes, cs_x, cs_y, dcs_x, dcs_y, None, upper_coefs, t))
     print("Upper coefs:")
-    print(ue)
+    print(err)
     lx = sns.lineplot(y=n, x=l[:-1], ax=ax[1])
     lx = sns.lineplot(y=l[1:], x=l[:-1], ax=ax[1])
     lx.set(title="Upper")
@@ -85,7 +158,7 @@ def heal(vertebraes: list[Vertebrae]) -> list[Vertebrae]:
     for v in vertebraes:
         cv2.fillConvexPoly(spine_conv, v.mask_xy, 255, 1)
         cv2.polylines(spine_conv, [v.reference_points], True, 200, 3)
-    for i in np.linspace(txy[0][0], txy[0][-1], 3000):
+    for i in np.linspace(t[0][0], t[0][-1], 3000, dtype=np.int32):
         spine_conv[int(cs_y(i)), int(cs_x(i))] = 150
 
     sns.heatmap(spine_conv, ax=ax[0])
@@ -184,25 +257,21 @@ def heal(vertebraes: list[Vertebrae]) -> list[Vertebrae]:
 
     vind: np.int32 = 1
     while vind < len(vertebraes) - 1:
-        next_bottom_t = bottom_coefs[0] + bottom_coefs[1] * vertebraes[vind].vpath.start_t
-        next_upper_t = upper_coefs[0] + upper_coefs[1] * (vertebraes[vind].vpath.start_t + vertebraes[vind].height)
+        next_bottom_t = bottom_coefs[0] + bottom_coefs[1] * (t[0][vind * 2])
+        next_upper_t = upper_coefs[0] + upper_coefs[1] * (t[0][vind * 2 + 1])
         next_middle_t = (next_bottom_t + next_upper_t) / 2
 
         if vertebraes[vind].vpath.start_t + vertebraes[vind].height < next_middle_t < vertebraes[vind + 1].vpath.start_t:
-            mp = np.array([cs_x(next_middle_t), cs_y(next_middle_t)], dtype=np.int32)
-            dv = np.array([dcs_x(next_middle_t), dcs_y(next_middle_t)])
-            dv /= np.linalg.norm(dv)
-
             part = (next_upper_t - vertebraes[vind].vpath.start_t - vertebraes[vind].height) / (vertebraes[vind + 1].vpath.start_t - vertebraes[vind].vpath.start_t - vertebraes[vind].height)
             upper_plate_length = (1 - part) * np.linalg.norm(vertebraes[vind].upper_plate_normal) + part * np.linalg.norm(vertebraes[vind + 1].bottom_plate_normal)
-            upper_middle_point = mp + (next_upper_t - next_middle_t) * dv
-            upper_normal = np.array([dv[1], -dv[0]])
+            upper_middle_point = np.array([cs_x(next_upper_t), cs_y(next_upper_t)], dtype=np.float32)
+            upper_normal = np.array([dcs_y(next_upper_t), -dcs_x(next_upper_t)], dtype=np.float32)
             upper_normal /= np.linalg.norm(upper_normal)
 
             part = (next_bottom_t - vertebraes[vind].vpath.start_t - vertebraes[vind].height) / (vertebraes[vind + 1].vpath.start_t - vertebraes[vind].vpath.start_t - vertebraes[vind].height)
             bottom_plate_length = (1 - part) * np.linalg.norm(vertebraes[vind].upper_plate_normal) + part * np.linalg.norm(vertebraes[vind + 1].bottom_plate_normal)
-            bottom_middle_point = mp - (next_upper_t - next_middle_t) * dv
-            bottom_normal = np.array([dv[1], -dv[0]])
+            bottom_middle_point = np.array([cs_x(next_bottom_t), cs_y(next_bottom_t)], dtype=np.float32)
+            bottom_normal = np.array([dcs_y(next_bottom_t), -dcs_x(next_bottom_t)], dtype=np.float32)
             bottom_normal /= np.linalg.norm(bottom_normal)
             
             new_ref_points = np.array(
@@ -229,127 +298,127 @@ def heal(vertebraes: list[Vertebrae]) -> list[Vertebrae]:
 
     # Heal sticked vertebraes (intersect)
 
-    vind: np.int32 = 1
-    while vind < len(vertebraes) - 2:
-        comb_points: np.ndarray[np.int32] = np.concatenate([vertebraes[vind].reference_points, vertebraes[vind + 1].reference_points], axis=0)
+    # vind: np.int32 = 1
+    # while vind < len(vertebraes) - 2:
+    #     comb_points: np.ndarray[np.int32] = np.concatenate([vertebraes[vind].reference_points, vertebraes[vind + 1].reference_points], axis=0)
 
-        max_v: np.ndarray[np.int32] = np.max(comb_points, axis=0)
+    #     max_v: np.ndarray[np.int32] = np.max(comb_points, axis=0)
         
-        tmp_canvas_fst: np.ndarray[np.uint8] = np.zeros(max_v[::-1], dtype=np.uint8)
-        tmp_canvas_sec: np.ndarray[np.uint8] = np.zeros(max_v[::-1], dtype=np.uint8)
+    #     tmp_canvas_fst: np.ndarray[np.uint8] = np.zeros(max_v[::-1], dtype=np.uint8)
+    #     tmp_canvas_sec: np.ndarray[np.uint8] = np.zeros(max_v[::-1], dtype=np.uint8)
 
-        cv2.fillConvexPoly(tmp_canvas_fst, vertebraes[vind].reference_points, 255, 1)
-        cv2.fillConvexPoly(tmp_canvas_sec, vertebraes[vind + 1].reference_points, 255, 1)
+    #     cv2.fillConvexPoly(tmp_canvas_fst, vertebraes[vind].reference_points, 255, 1)
+    #     cv2.fillConvexPoly(tmp_canvas_sec, vertebraes[vind + 1].reference_points, 255, 1)
 
-        intersection: np.ndarray[np.int32] = np.where(cv2.bitwise_and(tmp_canvas_fst, tmp_canvas_sec))
+    #     intersection: np.ndarray[np.int32] = np.where(cv2.bitwise_and(tmp_canvas_fst, tmp_canvas_sec))
 
-        if intersection[0].shape[0] > 1:
-            cut_length = np.linalg.norm(vertebraes[vind].reference_points[0] - vertebraes[vind].reference_points[3])
+    #     if intersection[0].shape[0] > 1:
+    #         cut_length = np.linalg.norm(vertebraes[vind].reference_points[0] - vertebraes[vind].reference_points[3])
 
-            try:
-                slope, intercept, r, p, se = scipy.stats.linregress(intersection[1], intersection[0])
+    #         try:
+    #             slope, intercept, r, p, se = scipy.stats.linregress(intersection[1], intersection[0])
 
-                mx = np.median(intersection[1])
+    #             mx = np.median(intersection[1])
 
-                cut = np.array(
-                    [
-                        [mx - cut_length, intercept + slope * (mx - cut_length)],
-                        [mx + cut_length, intercept + slope * (mx + cut_length)]
-                    ],
-                    dtype=np.int32
-                )
+    #             cut = np.array(
+    #                 [
+    #                     [mx - cut_length, intercept + slope * (mx - cut_length)],
+    #                     [mx + cut_length, intercept + slope * (mx + cut_length)]
+    #                 ],
+    #                 dtype=np.int32
+    #             )
                 
-            except Exception as e:
-                x = intersection[1][0]
-                y = np.median(intersection[0])
+    #         except Exception as e:
+    #             x = intersection[1][0]
+    #             y = np.median(intersection[0])
 
-                cut = np.array(
-                    [
-                        [x, y + cut_length],
-                        [x, y - cut_length]
-                    ],
-                    dtype=np.int32
-                )
+    #             cut = np.array(
+    #                 [
+    #                     [x, y + cut_length],
+    #                     [x, y - cut_length]
+    #                 ],
+    #                 dtype=np.int32
+    #             )
             
-            main_vec = vertebraes[vind + 1].bottom_plate_middle_point - vertebraes[vind].bottom_plate_middle_point
-            cut = cut[np.argsort([Vertebrae._get_signed_angle(main_vec, cut[0] - vertebraes[vind].bottom_plate_middle_point) for j in [0, 1]])]
+    #         main_vec = vertebraes[vind + 1].bottom_plate_middle_point - vertebraes[vind].bottom_plate_middle_point
+    #         cut = cut[np.argsort([Vertebrae._get_signed_angle(main_vec, cut[0] - vertebraes[vind].bottom_plate_middle_point) for j in [0, 1]])]
 
-            current_cut_points = np.array(
-                [
-                    vertebraes[vind].bottom_plate_middle_point - vertebraes[vind].bottom_plate_normal,
-                    cut[1],
-                    cut[0],
-                    vertebraes[vind].bottom_plate_middle_point + vertebraes[vind].bottom_plate_normal
-                ],
-                dtype=np.int32
-            )
-            tmp_canvas_1 = np.zeros(np.max(vertebraes[vind].mask_xy, axis=0)[::-1], dtype=np.uint8)
-            cv2.fillConvexPoly(tmp_canvas_1, vertebraes[vind].mask_xy, 255, 0)
+    #         current_cut_points = np.array(
+    #             [
+    #                 vertebraes[vind].bottom_plate_middle_point - vertebraes[vind].bottom_plate_normal,
+    #                 cut[1],
+    #                 cut[0],
+    #                 vertebraes[vind].bottom_plate_middle_point + vertebraes[vind].bottom_plate_normal
+    #             ],
+    #             dtype=np.int32
+    #         )
+    #         tmp_canvas_1 = np.zeros(np.max(vertebraes[vind].mask_xy, axis=0)[::-1], dtype=np.uint8)
+    #         cv2.fillConvexPoly(tmp_canvas_1, vertebraes[vind].mask_xy, 255, 0)
 
-            tmp_canvas_2 = np.zeros(np.max(vertebraes[vind].mask_xy, axis=0)[::-1], dtype=np.uint8)
-            cv2.fillConvexPoly(tmp_canvas_2, current_cut_points, 255, 0)
+    #         tmp_canvas_2 = np.zeros(np.max(vertebraes[vind].mask_xy, axis=0)[::-1], dtype=np.uint8)
+    #         cv2.fillConvexPoly(tmp_canvas_2, current_cut_points, 255, 0)
 
-            new_mask_xy = np.squeeze(
-                    max(
-                    cv2.findContours(
-                        cv2.bitwise_and(tmp_canvas_1, tmp_canvas_2),
-                        cv2.RETR_TREE,
-                        cv2.CHAIN_APPROX_NONE
-                    )[0],
-                    key=cv2.contourArea
-                )
-            )
+    #         new_mask_xy = np.squeeze(
+    #                 max(
+    #                 cv2.findContours(
+    #                     cv2.bitwise_and(tmp_canvas_1, tmp_canvas_2),
+    #                     cv2.RETR_TREE,
+    #                     cv2.CHAIN_APPROX_NONE
+    #                 )[0],
+    #                 key=cv2.contourArea
+    #             )
+    #         )
 
-            new_current_vertebrae = Vertebrae(
-                new_mask_xy
-            )
+    #         new_current_vertebrae = Vertebrae(
+    #             new_mask_xy
+    #         )
 
-            next_cut_points = np.array(
-                [
-                    cut[1],
-                    vertebraes[vind + 1].upper_plate_middle_point - vertebraes[vind + 1].upper_plate_normal,
-                    vertebraes[vind + 1].upper_plate_middle_point + vertebraes[vind + 1].upper_plate_normal,
-                    cut[0],
-                ],
-                dtype=np.int32
-            )
+    #         next_cut_points = np.array(
+    #             [
+    #                 cut[1],
+    #                 vertebraes[vind + 1].upper_plate_middle_point - vertebraes[vind + 1].upper_plate_normal,
+    #                 vertebraes[vind + 1].upper_plate_middle_point + vertebraes[vind + 1].upper_plate_normal,
+    #                 cut[0],
+    #             ],
+    #             dtype=np.int32
+    #         )
 
-            tmp_canvas_1 = np.zeros(np.max(vertebraes[vind + 1].mask_xy, axis=0)[::-1], dtype=np.uint8)
-            cv2.fillConvexPoly(tmp_canvas_1, vertebraes[vind + 1].mask_xy, 255, 0)
+    #         tmp_canvas_1 = np.zeros(np.max(vertebraes[vind + 1].mask_xy, axis=0)[::-1], dtype=np.uint8)
+    #         cv2.fillConvexPoly(tmp_canvas_1, vertebraes[vind + 1].mask_xy, 255, 0)
 
-            tmp_canvas_2 = np.zeros(np.max(vertebraes[vind + 1].mask_xy, axis=0)[::-1], dtype=np.uint8)
-            cv2.fillConvexPoly(tmp_canvas_2, next_cut_points, 255, 0)
+    #         tmp_canvas_2 = np.zeros(np.max(vertebraes[vind + 1].mask_xy, axis=0)[::-1], dtype=np.uint8)
+    #         cv2.fillConvexPoly(tmp_canvas_2, next_cut_points, 255, 0)
 
-            new_mask_xy = np.squeeze(
-                max(
-                    cv2.findContours(
-                        cv2.bitwise_and(tmp_canvas_1, tmp_canvas_2),
-                        cv2.RETR_TREE,
-                        cv2.CHAIN_APPROX_NONE
-                    )[0],
-                    key=cv2.contourArea
-                )
-            )
+    #         new_mask_xy = np.squeeze(
+    #             max(
+    #                 cv2.findContours(
+    #                     cv2.bitwise_and(tmp_canvas_1, tmp_canvas_2),
+    #                     cv2.RETR_TREE,
+    #                     cv2.CHAIN_APPROX_NONE
+    #                 )[0],
+    #                 key=cv2.contourArea
+    #             )
+    #         )
 
-            new_next_vertebrae = Vertebrae(
-                new_mask_xy
-            )
+    #         new_next_vertebrae = Vertebrae(
+    #             new_mask_xy
+    #         )
 
-            vertebraes = vertebraes[:vind] + [new_current_vertebrae, new_next_vertebrae] + vertebraes[vind + 2:]
+    #         vertebraes = vertebraes[:vind] + [new_current_vertebrae, new_next_vertebrae] + vertebraes[vind + 2:]
 
-            vertebraes[vind].order_reference_points(vertebraes[vind - 1].central_point, "down")
-            vertebraes[vind + 1].order_reference_points(vertebraes[vind].central_point, "down")
+    #         vertebraes[vind].order_reference_points(vertebraes[vind - 1].central_point, "down")
+    #         vertebraes[vind + 1].order_reference_points(vertebraes[vind].central_point, "down")
 
-            vertebraes[vind].set_vpath(vertebraes[vind - 1], vertebraes[vind + 1])
-            vertebraes[vind + 1].set_vpath(vertebraes[vind], vertebraes[vind + 2])
+    #         vertebraes[vind].set_vpath(vertebraes[vind - 1], vertebraes[vind + 1])
+    #         vertebraes[vind + 1].set_vpath(vertebraes[vind], vertebraes[vind + 2])
 
-        vind += 1
+        # vind += 1
 
     spine_conv: np.ndarray = np.zeros((4200, 2000), dtype=np.uint8)
     for v in vertebraes:
         cv2.fillConvexPoly(spine_conv, v.mask_xy, 255, 1)
         cv2.polylines(spine_conv, [v.reference_points], True, 200, 3)
-    for i in np.linspace(txy[0][0], txy[0][-1], 3000):
+    for i in np.linspace(t[0][0], t[0][-1], 3000):
         spine_conv[int(cs_y(i)), int(cs_x(i))] = 150
 
     sns.heatmap(spine_conv, ax=ax[1])
